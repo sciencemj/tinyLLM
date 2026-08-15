@@ -2,7 +2,10 @@ import re
 from itertools import islice
 from pathlib import Path
 
+import deeptool as dt
 import numpy as np
+import torch
+from torch.utils import data as torch_data
 
 
 def _chunks(iterable, size):
@@ -61,3 +64,76 @@ def detokenize(text):
     text = _SPACE_BEFORE_PUNCT.sub(r"\1", text)
     text = _MISSING_SPACE_AFTER.sub(r"\1\2 \3", text)
     return _RUNS_OF_SPACE.sub(" ", text).strip()
+
+
+class _WindowDataset(torch_data.Dataset):
+    """uint16 memmap 에서 길이 `block_size` 짜리 창을 뽑는다.
+
+    `seed` 가 None 이면 호출마다 무작위 위치를 고른다 (학습용). 값이 있으면
+    인덱스마다 고정된 위치를 준다 (검증용) -- val loss 가 흔들리면
+    best 체크포인트 선택이 오염되기 때문이다.
+    """
+
+    def __init__(self, path, block_size, length, seed=None):
+        self.path = str(path)
+        self.block_size = block_size
+        self.length = length
+        self.seed = seed
+        self.n_tokens = token_count(self.path)
+        if self.n_tokens <= block_size + 1:
+            raise ValueError(
+                f"{self.path} has {self.n_tokens} tokens, "
+                f"too few for block_size={block_size}"
+            )
+        self._data = None
+
+    def _array(self):
+        # memmap 은 워커 프로세스마다 따로 열어야 한다. 그래서 지연 오픈.
+        if self._data is None:
+            self._data = np.memmap(self.path, dtype=np.uint16, mode="r")
+        return self._data
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, i):
+        high = self.n_tokens - self.block_size - 1
+        if self.seed is None:
+            start = int(torch.randint(high, (1,)).item())
+        else:
+            generator = torch.Generator().manual_seed(self.seed + i)
+            start = int(torch.randint(high, (1,), generator=generator).item())
+        window = self._array()[start : start + self.block_size + 1]
+        window = torch.from_numpy(window.astype(np.int64))
+        return window[:-1], window[1:]
+
+
+class PretrainData(dt.DataModule):
+    """토큰 bin 위의 학습/검증 로더.
+
+    train 로더의 길이를 `steps_per_epoch * batch_size` 로 맞추는 것이 핵심이다.
+    deeptool 의 Trainer 는 epoch 마다 eval·체크포인트·early stopping 을 하는데,
+    진짜 epoch 은 두 시간대라 너무 굵다. 여기서 epoch 을 100 step 청크로
+    재정의해 원하는 주기를 만든다.
+    """
+
+    def __init__(self, train_bin, val_bin, block_size=512, batch_size=32,
+                 steps_per_epoch=100, val_batches=20, num_workers=2, seed=1234):
+        super().__init__()
+        self.save_hyperparameters()
+
+    def get_dataloader(self, train):
+        if train:
+            dataset = _WindowDataset(
+                self.train_bin, self.block_size,
+                self.steps_per_epoch * self.batch_size,
+            )
+        else:
+            dataset = _WindowDataset(
+                self.val_bin, self.block_size,
+                self.val_batches * self.batch_size, seed=self.seed,
+            )
+        return torch_data.DataLoader(
+            dataset, self.batch_size, shuffle=False,
+            num_workers=self.num_workers, pin_memory=True, drop_last=True,
+        )

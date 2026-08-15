@@ -1,6 +1,8 @@
 import numpy as np
+import pytest
+import torch
 
-from tinyllm.data import detokenize, encode_split, token_count
+from tinyllm.data import PretrainData, detokenize, encode_split, token_count
 from tinyllm.tokenizer import BOS_ID, train_tokenizer
 
 CORPUS = ["Once upon a time there was a little girl named Lily."] * 200
@@ -78,3 +80,59 @@ def test_detokenize_collapses_runs_of_spaces_and_strips():
 def test_detokenize_leaves_hyphenated_words_alone():
     assert detokenize("I can do 30 push-ups a minute !") == \
         "I can do 30 push-ups a minute!"
+
+
+# --- PretrainData -----------------------------------------------------------
+
+@pytest.fixture
+def bins(tmp_path):
+    rng = np.random.default_rng(0)
+    train = tmp_path / "train.bin"
+    val = tmp_path / "val.bin"
+    rng.integers(0, 8000, 5000, dtype=np.uint16).tofile(train)
+    rng.integers(0, 8000, 5000, dtype=np.uint16).tofile(val)
+    return train, val
+
+
+def _data(bins, **kwargs):
+    train, val = bins
+    opts = dict(block_size=16, batch_size=4, steps_per_epoch=10,
+                val_batches=3, num_workers=0)
+    opts.update(kwargs)
+    return PretrainData(train_bin=train, val_bin=val, **opts)
+
+
+def test_train_loader_has_exactly_steps_per_epoch_batches(bins):
+    assert len(_data(bins).train_dataloader()) == 10
+
+
+def test_val_loader_has_exactly_val_batches(bins):
+    assert len(_data(bins).val_dataloader()) == 3
+
+
+def test_batch_shapes_and_dtype(bins):
+    x, y = next(iter(_data(bins).train_dataloader()))
+    assert x.shape == (4, 16)
+    assert y.shape == (4, 16)
+    assert x.dtype == torch.int64
+
+
+def test_targets_are_inputs_shifted_by_one(bins):
+    x, y = next(iter(_data(bins).train_dataloader()))
+    assert torch.equal(y[:, :-1], x[:, 1:])
+
+
+def test_validation_windows_are_deterministic(bins):
+    """val 윈도우가 매번 바뀌면 val loss 가 흔들려 best 체크포인트가 오염된다."""
+    data = _data(bins)
+    first = next(iter(data.val_dataloader()))[0]
+    second = next(iter(data.val_dataloader()))[0]
+    assert torch.equal(first, second)
+
+
+def test_training_windows_are_not_deterministic(bins):
+    torch.manual_seed(0)
+    data = _data(bins)
+    first = next(iter(data.train_dataloader()))[0]
+    second = next(iter(data.train_dataloader()))[0]
+    assert not torch.equal(first, second)
