@@ -14,7 +14,7 @@ from tinyllm.model import TinyLM
 
 
 def fit(model, data, max_epochs, device, best_path, log_dir=None,
-        gradient_clip_val=1.0):
+        gradient_clip_val=1.0, patience=None):
     """Trainer 를 세우고 학습을 돌린다. (history, trainer) 를 돌려준다."""
     trainer = dt.Trainer(
         max_epochs=max_epochs,
@@ -24,6 +24,7 @@ def fit(model, data, max_epochs, device, best_path, log_dir=None,
         snapshot_best=True,
         best_path=best_path,
         log_dir=log_dir,
+        patience=patience,
     )
     history = trainer.fit(model, data)
     return history, trainer
