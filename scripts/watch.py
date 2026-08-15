@@ -25,6 +25,11 @@ def fetch(host, run_dir):
     meta = json.loads(_read(host, f"{run_dir}/meta.json"))
     rows = [json.loads(line) for line in
             _read(host, f"{run_dir}/history.jsonl").splitlines() if line.strip()]
+    # 같은 log_dir 로 여러 번 돌렸으면 앞선 런의 기록이 남아 있다. epoch 이 0 으로
+    # 되돌아가는 마지막 지점부터가 현재 런이다.
+    starts = [i for i, r in enumerate(rows) if r["epoch"] == 0]
+    if starts:
+        rows = rows[starts[-1]:]
     return meta, rows
 
 

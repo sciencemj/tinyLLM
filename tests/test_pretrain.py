@@ -55,3 +55,30 @@ def test_best_checkpoint_is_written(bins, tmp_path):
     fit(model, data, max_epochs=2, device="cpu", best_path=path)
     assert path.exists()
     assert "model" in torch.load(path, map_location="cpu", weights_only=False)
+
+
+def test_each_run_gets_its_own_log_directory(bins, tmp_path):
+    """log_dir 은 런마다 따로여야 한다.
+
+    공유하면 RunRecorder 가 같은 history.jsonl 에 이어 써서 두 런이 한 곡선으로
+    섞이고, load_runs 는 root/<런>/history.jsonl 만 찾으므로 root 바로 밑에 있는
+    파일은 아예 못 읽는다. SFT 스윕 비교가 여기에 달려 있다.
+    """
+    import deeptool as dt
+
+    train, val = bins
+    runs_root = tmp_path / "runs"
+    for tag in ("a", "b"):
+        model = TinyLM(vocab_size=64, d_model=32, n_head=4, n_layer=2, d_ff=64,
+                       block_size=16, device_type="cpu", warmup=2,
+                       total_steps=20)
+        data = PretrainData(train_bin=train, val_bin=val, block_size=16,
+                            batch_size=4, steps_per_epoch=5, val_batches=2,
+                            num_workers=0)
+        fit(model, data, max_epochs=2, device="cpu",
+            best_path=tmp_path / f"{tag}.pt", log_dir=runs_root / tag)
+
+    loaded = dt.load_runs(runs_root)
+    assert set(loaded) == {"a", "b"}
+    assert len(loaded["a"]["val_loss"]) == 2
+    assert len(loaded["b"]["val_loss"]) == 2

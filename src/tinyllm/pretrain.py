@@ -45,6 +45,8 @@ def main():
     ap.add_argument("--warmup", type=int, default=200)
     ap.add_argument("--dropout", type=float, default=0.0)
     ap.add_argument("--num-workers", type=int, default=2)
+    ap.add_argument("--tag", default="pretrain",
+                    help="체크포인트와 런 로그를 구분할 이름")
     ap.add_argument("--smoke", action="store_true",
                     help="2 epoch 만 돌려 배선을 확인한다")
     args = ap.parse_args()
@@ -80,9 +82,11 @@ def main():
                         num_workers=args.num_workers)
 
     args.out.mkdir(parents=True, exist_ok=True)
+    # log_dir 은 런마다 따로 줘야 한다. 공유하면 RunRecorder 가 한 파일에 이어 쓰고,
+    # load_runs 는 root/<런>/history.jsonl 만 찾으므로 아무것도 못 읽는다.
     history, trainer = fit(model, data, max_epochs, device,
-                           best_path=args.out / "pretrain_best.pt",
-                           log_dir=args.out / "runs")
+                           best_path=args.out / f"{args.tag}_best.pt",
+                           log_dir=args.out / "runs" / args.tag)
     print(f"best val {trainer.best_val_loss:.4f} at chunk {trainer.best_epoch}")
     return history
 

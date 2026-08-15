@@ -59,7 +59,7 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     history, trainer = fit(model, data, args.epochs, device,
                            best_path=args.out / f"{args.tag}_best.pt",
-                           log_dir=args.out / "runs",
+                           log_dir=args.out / "runs" / args.tag,
                            patience=args.patience)
     restored = trainer.restore_best()
     print(f"best val {trainer.best_val_loss:.4f} at epoch {restored}")
