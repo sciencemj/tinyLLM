@@ -11,3 +11,8 @@ wheels/
 
 # Tooling
 .claude/
+docs/
+
+# Data and training artifacts
+data/
+out/
