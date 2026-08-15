@@ -7,6 +7,8 @@ import numpy as np
 import torch
 from torch.utils import data as torch_data
 
+from tinyllm.tokenizer import ASSISTANT, EOT, USER
+
 
 def _chunks(iterable, size):
     it = iter(iterable)
@@ -127,6 +129,53 @@ class PretrainData(dt.DataModule):
             dataset = _WindowDataset(
                 self.train_bin, self.block_size,
                 self.steps_per_epoch * self.batch_size,
+            )
+        else:
+            dataset = _WindowDataset(
+                self.val_bin, self.block_size,
+                self.val_batches * self.batch_size, seed=self.seed,
+            )
+        return torch_data.DataLoader(
+            dataset, self.batch_size, shuffle=False,
+            num_workers=self.num_workers, pin_memory=True, drop_last=True,
+        )
+
+
+def render_dialog(utterances):
+    """발화 리스트를 하나의 학습 문자열로 편다.
+
+    DailyDialog 에는 화자 이름이 없고 두 사람이 번갈아 말한다. 홀/짝 번째를
+    user/assistant 로 고정 매핑한다. 원본이 토큰화된 형태라 detokenize 를 거친다.
+    """
+    parts = []
+    for i, utterance in enumerate(utterances):
+        role = USER if i % 2 == 0 else ASSISTANT
+        parts.append(f"{role}{detokenize(utterance)}{EOT}")
+    return "".join(parts)
+
+
+class SFTData(dt.DataModule):
+    """DailyDialog 토큰 bin 위의 로더.
+
+    사전학습과 달리 코퍼스가 작아서 한 epoch 이 수십 초다. 그래서 청크로
+    쪼갤 이유가 없고, epoch 이 곧 코퍼스 1 회 통과다.
+    """
+
+    def __init__(self, train_bin, val_bin, block_size=512, batch_size=32,
+                 steps_per_epoch=None, val_batches=10, num_workers=2,
+                 seed=1234):
+        super().__init__()
+        self.save_hyperparameters()
+
+    def _steps(self):
+        if self.steps_per_epoch is not None:
+            return self.steps_per_epoch
+        return token_count(self.train_bin) // (self.block_size * self.batch_size)
+
+    def get_dataloader(self, train):
+        if train:
+            dataset = _WindowDataset(
+                self.train_bin, self.block_size, self._steps() * self.batch_size,
             )
         else:
             dataset = _WindowDataset(

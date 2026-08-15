@@ -2,8 +2,10 @@ import numpy as np
 import pytest
 import torch
 
-from tinyllm.data import PretrainData, detokenize, encode_split, token_count
-from tinyllm.tokenizer import BOS_ID, train_tokenizer
+from tinyllm.data import (
+    PretrainData, SFTData, detokenize, encode_split, render_dialog, token_count,
+)
+from tinyllm.tokenizer import ASSISTANT, BOS_ID, EOT, USER, train_tokenizer
 
 CORPUS = ["Once upon a time there was a little girl named Lily."] * 200
 
@@ -136,3 +138,41 @@ def test_training_windows_are_not_deterministic(bins):
     first = next(iter(data.train_dataloader()))[0]
     second = next(iter(data.train_dataloader()))[0]
     assert not torch.equal(first, second)
+
+
+# --- SFTData ----------------------------------------------------------------
+
+def test_render_dialog_alternates_roles():
+    out = render_dialog(["Hi there", "Hello!", "How are you?"])
+    assert out == (f"{USER}Hi there{EOT}"
+                   f"{ASSISTANT}Hello!{EOT}"
+                   f"{USER}How are you?{EOT}")
+
+
+def test_render_dialog_strips_whitespace():
+    assert render_dialog(["  Hi  "]) == f"{USER}Hi{EOT}"
+
+
+def test_render_dialog_detokenizes_each_utterance():
+    """원본이 토큰화된 형태라 렌더링 단계에서 산문 간격으로 되돌려야 한다."""
+    assert render_dialog(["Say , Jim , how about a beer ?"]) == \
+        f"{USER}Say, Jim, how about a beer?{EOT}"
+
+
+def test_render_dialog_of_empty_is_empty():
+    assert render_dialog([]) == ""
+
+
+def test_sft_epoch_covers_the_whole_train_bin(bins):
+    train, val = bins  # 5000 토큰짜리 bin
+    data = SFTData(train_bin=train, val_bin=val, block_size=16, batch_size=4,
+                   val_batches=2, num_workers=0)
+    # 5000 // (16*4) = 78 배치
+    assert len(data.train_dataloader()) == 78
+
+
+def test_sft_respects_an_explicit_steps_per_epoch(bins):
+    train, val = bins
+    data = SFTData(train_bin=train, val_bin=val, block_size=16, batch_size=4,
+                   steps_per_epoch=7, val_batches=2, num_workers=0)
+    assert len(data.train_dataloader()) == 7
