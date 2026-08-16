@@ -167,7 +167,11 @@ def export(release, out_root, ckpt_dir, tokenizer_path, modeling_path,
            n_head=N_HEAD):
     checkpoint = ckpt_dir / release["checkpoint"]
     target = out_root / release["dir"]
-    target.mkdir(parents=True, exist_ok=True)
+    # 이전 내보내기의 잔재를 지운다. 폴더째 업로드하므로 __pycache__ 같은 것이
+    # 남아 있으면 그대로 공개 저장소에 올라간다.
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True)
 
     state = torch.load(checkpoint, map_location="cpu", weights_only=False)["model"]
     # head.weight 는 tok.weight 와 저장소를 공유한다(weight tying). safetensors 는
