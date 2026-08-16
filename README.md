@@ -3,6 +3,9 @@
 TinyStories로 사전학습하고 DailyDialog로 SFT한 **29.6M 파라미터 영어 대화 모델**.
 RTX 3060 Ti 한 대에서 사전학습 3.06시간 + SFT 7분.
 
+> 코드는 MIT. **SFT 체크포인트는 비상업 전용**입니다 — DailyDialog가 CC BY-NC-SA 4.0.
+> 자세한 것은 [라이선스](#라이선스)와 [`MODEL_CARD.md`](MODEL_CARD.md).
+
 ```
 you> Can you help me find a restaurant?
 bot> Yes, of course. We have a good restaurant near the Golden Square.
@@ -204,6 +207,8 @@ scripts/
   bench.py       throughput·메모리·커널 실측
   watch.py       원격 학습 진행 상황
 tests/           성질 기반 테스트 77개
+LICENSE          코드 (MIT)
+MODEL_CARD.md    모델 카드 — 체크포인트별 이용 조건, 한계, 인용
 ```
 
 ## 테스트
@@ -239,3 +244,50 @@ RTX 3060 Ti 8GB, bf16 + flash. 실측:
 | 32 | **bf16** | 174.0 | **94.2k** | **4.22 GB** |
 
 bf16 배수 **2.46배**. `mask=` + `is_causal=True` 조합이 flash 커널을 탄다.
+
+## 라이선스
+
+**코드는 MIT** ([`LICENSE`](LICENSE)). 모델 가중치와 학습 데이터는 별개 조건이다.
+
+| 대상 | 조건 |
+|---|---|
+| 이 저장소의 코드 | MIT |
+| `pretrain_best.pt` | 제약 없음 — CDLA-Sharing-1.0 §3.5 |
+| `sft_*_best.pt` | **비상업 + 출처표시 + 동일조건** — CC BY-NC-SA 4.0 |
+| TinyStories 데이터 | CDLA-Sharing-1.0 |
+| DailyDialog 데이터 | CC BY-NC-SA 4.0, "research purposes only" |
+
+**SFT 체크포인트를 상업적으로 쓸 수 없다.** 유료 서비스, 광고가 붙은 데모, 사내 제품
+어디에도 해당한다. 상업적 이용이 필요하면 사전학습 체크포인트를 그대로 두고 2단계
+데이터만 허용적 라이선스로 교체하면 된다 — 사전학습 3시간은 재사용되고 SFT는 2.4분이라
+교체 비용이 거의 없다.
+
+사전학습 체크포인트가 자유로운 근거는 CDLA-Sharing-1.0 §3.5다: *"This Agreement imposes
+no obligations or restrictions on Your Use or Publication of Results."* §1.11에서 Results는
+데이터의 Computational Use로 얻은 산출물이고, 조건은 데이터의 de minimis 분량 이상을
+포함하지 않는 것이다. 이 모델은 train/val 격차가 0.03이라 코퍼스를 외우고 있지 않다.
+
+모델 가중치가 법적으로 학습 데이터의 2차적 저작물인지는 아직 정리되지 않은 쟁점이다.
+위 구분은 각 라이선스의 문언과 데이터 제공자가 밝힌 의도를 따른 것이다.
+
+의존성은 모두 허용적이다 — PyTorch·`tokenizers`·`datasets`·Streamlit은 Apache-2.0,
+NumPy는 BSD-3 계열, [`deeptool`](https://github.com/sciencemj/deeptool)은 MIT.
+화면이 쓰는 Lexend와 JetBrains Mono는 Google Fonts에서 런타임에 불러오므로 번들되지 않는다.
+
+### 인용
+
+```bibtex
+@article{eldan2023tinystories,
+  title={TinyStories: How Small Can Language Models Be and Still Speak Coherent English?},
+  author={Eldan, Ronen and Li, Yuanzhi},
+  journal={arXiv preprint arXiv:2305.07759},
+  year={2023}
+}
+
+@InProceedings{li2017dailydialog,
+  author = {Li, Yanran and Su, Hui and Shen, Xiaoyu and Li, Wenjie and Cao, Ziqiang and Niu, Shuzi},
+  title = {DailyDialog: A Manually Labelled Multi-turn Dialogue Dataset},
+  booktitle = {Proceedings of The 8th International Joint Conference on Natural Language Processing (IJCNLP 2017)},
+  year = {2017}
+}
+```
