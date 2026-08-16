@@ -12,14 +12,23 @@ from tinyllm.sft import load_pretrained
 from tinyllm.tokenizer import ASSISTANT, EOT, EOT_ID, USER, load_tokenizer
 
 
-def build_prompt(history, tokenizer):
-    """history: [(role, text), ...] -> (1, T) int64. 끝은 항상 assistant 차례 표시."""
+def render_prompt(history):
+    """history: [(role, text), ...] -> 모델이 실제로 읽는 문자열.
+
+    끝은 항상 assistant 차례 표시다. 그것이 있어야 모델이 이야기를 이어쓰는 대신
+    자기 차례로 답한다.
+    """
     parts = []
     for role, text in history:
         marker = USER if role == "user" else ASSISTANT
         parts.append(f"{marker}{text.strip()}{EOT}")
     parts.append(ASSISTANT)
-    ids = tokenizer.encode("".join(parts)).ids
+    return "".join(parts)
+
+
+def build_prompt(history, tokenizer):
+    """history: [(role, text), ...] -> (1, T) int64."""
+    ids = tokenizer.encode(render_prompt(history)).ids
     return torch.tensor([ids], dtype=torch.long)
 
 

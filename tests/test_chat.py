@@ -38,3 +38,12 @@ def test_reply_returns_a_string(tok, model):
 def test_reply_strips_the_eot_token(tok, model):
     out = reply(model, tok, [("user", "hi")], max_new_tokens=8)
     assert "<|eot|>" not in out
+
+
+def test_render_prompt_ends_with_the_assistant_marker():
+    """이 표시가 없으면 모델은 대화 대신 이야기를 이어쓴다."""
+    from tinyllm.chat import render_prompt
+    from tinyllm.tokenizer import ASSISTANT, EOT, USER
+
+    out = render_prompt([("user", "hi"), ("assistant", "hello")])
+    assert out == f"{USER}hi{EOT}{ASSISTANT}hello{EOT}{ASSISTANT}"

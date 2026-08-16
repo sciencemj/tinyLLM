@@ -139,13 +139,35 @@ uv run python -m tinyllm.pretrain
 # 2단계: DailyDialog SFT
 uv run python -m tinyllm.sft --lr 3e-4 --epochs 24 --tag sft_lr3e-4_e24
 
-# 대화
+# 대화 (터미널)
 uv run tinyllm-chat --checkpoint out/sft_lr3e-4_e24_best.pt \
                     --tokenizer data/tokenizer.json
+
+# 대화 (브라우저)
+uv run streamlit run src/tinyllm/app.py
 
 # 원격 학습 진행 상황
 uv run python scripts/watch.py --follow
 ```
+
+## 화면
+
+```
+uv run streamlit run src/tinyllm/app.py
+```
+
+사이드바에서 체크포인트를 고르고(사전학습 체크포인트를 고르면 말차례를 배우기 전
+상태와 비교할 수 있다), 무작위성·후보 토큰 수를 조절한다.
+
+화면 아래에 **모델이 실제로 읽는 글자**가 상시 노출된다. 채팅 말풍선은 우리가 만든
+허구이고, 모델이 보는 것은 끊기지 않는 한 줄이다:
+
+```
+<|user|>Hi, how are you today?<|eot|><|assistant|>Fine, thanks.<|eot|><|assistant|>
+```
+
+끝에 `<|assistant|>`가 붙는 순간이 보이면 왜 모델이 이야기를 이어쓰지 않고 대답하는지
+알 수 있다. 이것이 2단계 SFT가 가르친 전부다.
 
 ## 학습 루프를 deeptool에 올리는 법
 
@@ -177,10 +199,11 @@ src/tinyllm/
   pretrain.py    1단계
   sft.py         2단계
   chat.py        대화 CLI
+  app.py         대화 화면 (Streamlit)
 scripts/
   bench.py       throughput·메모리·커널 실측
   watch.py       원격 학습 진행 상황
-tests/           성질 기반 테스트 71개
+tests/           성질 기반 테스트 77개
 ```
 
 ## 테스트
