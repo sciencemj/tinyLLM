@@ -203,10 +203,12 @@ src/tinyllm/
   sft.py         2단계
   chat.py        대화 CLI
   app.py         대화 화면 (Streamlit)
+  modeling.py    배포용 독립 정의 (deeptool 비의존)
 scripts/
   bench.py       throughput·메모리·커널 실측
   watch.py       원격 학습 진행 상황
-tests/           성질 기반 테스트 77개
+  export_hf.py   체크포인트 -> HF 업로드 폴더
+tests/           성질 기반 테스트 83개
 LICENSE          코드 (MIT)
 MODEL_CARD.md    모델 카드 — 체크포인트별 이용 조건, 한계, 인용
 ```
@@ -244,6 +246,41 @@ RTX 3060 Ti 8GB, bf16 + flash. 실측:
 | 32 | **bf16** | 174.0 | **94.2k** | **4.22 GB** |
 
 bf16 배수 **2.46배**. `mask=` + `is_causal=True` 조합이 flash 커널을 탄다.
+
+## 가중치 공개
+
+```bash
+uv run python scripts/export_hf.py     # dist/ 에 업로드 폴더 두 개 생성
+```
+
+체크포인트마다 이용 조건이 다르므로 **저장소를 나눈다.** 한 저장소에 같이 올리면
+저장소 전체가 가장 엄격한 조건(비상업)에 묶이는데, 사전학습 가중치는 그럴 이유가 없다.
+
+| 폴더 | 체크포인트 | HF license 태그 |
+|---|---|---|
+| `dist/tinyllm-29m-tinystories` | 사전학습 | `cdla-sharing-1.0` |
+| `dist/tinyllm-29m-chat` | SFT | `cc-by-nc-sa-4.0` |
+
+각 폴더에 `model.safetensors`, `config.json`, `tokenizer.json`,
+`modeling_tinyllm.py`, `README.md`(모델 카드)가 들어간다.
+
+**`.pt` 가 아니라 safetensors 로 낸다.** `torch.save` 는 pickle 이라 로드할 때 임의
+코드가 실행될 수 있고, 공개 배포에서 남이 내 pickle 을 믿어야 하는 상황을 만들 이유가
+없다. 변환할 때 `head.weight` 를 뺀다 — tying 때문에 `tok.weight` 와 저장소를 공유하는데
+safetensors 는 공유 저장소를 거부한다. `modeling_tinyllm.py` 의 생성자가 다시 묶는다.
+
+**`modeling_tinyllm.py` 는 deeptool 을 요구하지 않는다.** 가중치 하나 열자고 학습용
+라이브러리를 설치하게 만들 이유가 없다. 학습용 정의와 같은 모델인지는
+`tests/test_modeling.py` 가 실제 체크포인트로 검증한다 — 변환 후 logits 가 원본과
+비트 단위로 같아야 통과한다.
+
+업로드:
+
+```bash
+uv run hf auth login
+uv run hf upload sciencemj/tinyllm-29m-tinystories dist/tinyllm-29m-tinystories . --repo-type model
+uv run hf upload sciencemj/tinyllm-29m-chat        dist/tinyllm-29m-chat        . --repo-type model
+```
 
 ## 라이선스
 

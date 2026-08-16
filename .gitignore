@@ -16,3 +16,4 @@ docs/
 # Data and training artifacts
 data/
 out/
+dist/
