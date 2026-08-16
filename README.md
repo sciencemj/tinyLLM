@@ -3,6 +3,9 @@
 TinyStories로 사전학습하고 DailyDialog로 SFT한 **29.6M 파라미터 영어 대화 모델**.
 RTX 3060 Ti 한 대에서 사전학습 3.06시간 + SFT 7분.
 
+가중치: [**tinyllm-29m-chat**](https://huggingface.co/sciencemj/tinyllm-29m-chat) (대화) ·
+[**tinyllm-29m-tinystories**](https://huggingface.co/sciencemj/tinyllm-29m-tinystories) (사전학습만)
+
 > 코드는 MIT. **SFT 체크포인트는 비상업 전용**입니다 — DailyDialog가 CC BY-NC-SA 4.0.
 > 자세한 것은 [라이선스](#라이선스)와 [`MODEL_CARD.md`](MODEL_CARD.md).
 

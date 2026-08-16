@@ -11,7 +11,9 @@ wheels/
 
 # Tooling
 .claude/
-docs/
+
+# 설계·구현 과정 문서. 결과 기록(docs/*.md)은 README 가 링크하므로 추적한다.
+docs/superpowers/
 
 # Data and training artifacts
 data/
