@@ -635,6 +635,11 @@ def test_setup_network_enables_private_access_and_creates_nat(sandbox):
     assert "--router tinyllm-router" in c and "--nat-all-subnet-ip-ranges" in c
 
 
+def test_prepare_passes_token_budget_to_the_vm(sandbox):
+    subprocess.run(["bash", str(GCP / "prepare_data.sh"), "create"], check=True, capture_output=True, text=True, timeout=60)
+    assert '--max-tokens "20000000000"' in (sandbox / "prep_startup.sh").read_text()
+
+
 def test_setup_network_is_idempotent(sandbox):
     (sandbox / "router.list").write_text("tinyllm-router\n")
     (sandbox / "nat.list").write_text("tinyllm-nat\n")

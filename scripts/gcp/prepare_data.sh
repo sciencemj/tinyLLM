@@ -5,6 +5,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${ENV_FILE:-$HERE/env}"
+MAX_TOKENS="${MAX_TOKENS:-20000000000}"
 
 case "${1:-}" in
   create)
@@ -35,7 +36,7 @@ export PATH="\$HOME/.local/bin:\$PATH"
 [ -d /opt/tinyllm ] || timeout 600 git clone --branch "$BRANCH" --single-branch "$REPO_URL" /opt/tinyllm
 cd /opt/tinyllm
 timeout 1800 uv sync
-uv run python -m tinyllm.v2.prepare --out data/v2
+uv run python -m tinyllm.v2.prepare --out data/v2 --max-tokens "$MAX_TOKENS"
 gcloud storage cp --no-clobber data/v2/* "gs://$BUCKET/data/v2/"
 echo done | gcloud storage cp - "gs://$BUCKET/data/v2/PREPARE_DONE"
 # Done: drop a stale failure marker from an earlier attempt, then stop billing right away.
