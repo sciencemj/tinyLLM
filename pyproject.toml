@@ -23,6 +23,7 @@ dependencies = [
 
 [project.scripts]
 tinyllm-chat = "tinyllm.chat:main"
+tinyllm-chat-v2 = "tinyllm.v2.chat:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]
