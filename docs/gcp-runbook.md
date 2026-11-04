@@ -19,6 +19,13 @@ Do not start until you have confirmed all of these. Nothing below does it for yo
 - [ ] You have looked up the current per-hour price of the chosen machine type, boot disk (300GB pd-ssd) and bucket storage, and multiplied by the expected hours.
 - [ ] You understand that once free credits run out, real charges start on your card.
 - [ ] W&B API key is stored in Secret Manager (see below). HF key only if needed.
+- [ ] The boot image exists and ships a driver new enough for the locked torch (CUDA 13, driver 580 line).
+  Before creating any VM run this and read the output (`env.example` defaults to `common-cu129-ubuntu-2204-nvidia-580`):
+  ```bash
+  source scripts/gcp/env
+  gcloud compute images describe-from-family "$IMAGE_FAMILY" --project "$IMAGE_PROJECT"
+  ```
+  The proof is still the boot-time `torch.cuda.is_available()` check in `startup.sh`: without CUDA the run fails before training.
 
 ## 1. One-time setup (you run these; they create billable resources)
 
@@ -37,7 +44,8 @@ Prerequisites, in order:
 4. Create the bucket and the secret (every command needs `--project`):
    ```bash
    source scripts/gcp/env
-   gcloud storage buckets create "gs://$BUCKET" --project "$PROJECT" --location "$REGION"
+   # --soft-delete-duration=0: no soft-delete retention, so deleted checkpoints stop billing at once
+   gcloud storage buckets create "gs://$BUCKET" --project "$PROJECT" --location "$REGION" --soft-delete-duration=0
    # type the key at the hidden prompt; never put it on a command line
    read -rs WANDB_API_KEY && printf %s "$WANDB_API_KEY" | gcloud secrets create "$SECRET_NAME" --project "$PROJECT" --data-file=- ; unset WANDB_API_KEY
    ```
@@ -63,6 +71,9 @@ Training refuses to start until `PREPARE_DONE` exists.
 
 ## 3. Start training
 
+Order: section 1 (setup), section 2 (corpus prep), then the section 4 resume test with a small
+run, and only then this section with the real `pretrain` values from `env`.
+
 ```bash
 source scripts/gcp/env
 GPU_TYPE=h100 scripts/gcp/create_template.sh      # or GPU_TYPE=l4; the command-line value wins over env
@@ -73,19 +84,32 @@ RUNNING. If none appears (no quota or capacity) it deletes the MIG and exits non
 H100 group can never come up later next to an L4 VM on the same checkpoint directory and W&B run.
 To fall back to L4, just rerun with `GPU_TYPE=l4`.
 
-`startup.sh` runs in the foreground on every boot: it clones the branch, runs `uv sync`, copies data if
-missing (and fails loudly if any file is missing), checks the GPU with `nvidia-smi` and torch, mounts
-checkpoints, fetches the W&B key from Secret Manager (no echo, no tracing; an empty key fails) and trains.
+`startup.sh` is the VM's startup script and runs on every boot until training ends (training is a
+child process; everything goes to the log file). It mounts checkpoints, clones the repo and checks out
+the commit `create_template.sh` recorded (`tl-commit`, the HEAD you had when you ran it, which must be
+pushed to `origin/$BRANCH`; a later push does not change a running or resumed job), runs `uv sync`, copies
+data if missing (and fails loudly if any file is missing), checks the GPU with `nvidia-smi` and torch,
+fetches the W&B key from Secret Manager (no echo, no tracing; an empty key fails) and trains. Every boot
+step (apt, git, `uv sync`, data copy, mount) has a time limit; a timeout counts as a failed step. Training
+itself has no limit.
 Logs: the last 2000 lines of `/var/log/tinyllm-train.log` are uploaded to
 `gs://$BUCKET/status/log_<tag>.txt` before the VM is stopped (the VM disk is deleted with the VM), so read
 that file after a DONE or FAILED run. While the VM runs, the log is at `/var/log/tinyllm-train.log`.
 
 When billing stops by itself: training finishes (DONE marker in `gs://$BUCKET/status/`), training
-fails 3 times or any boot step aborts (FAILED marker), or a DONE marker already exists. In each
-case the VM resizes the MIG to 0. A preemption, a plain VM delete or any other SIGTERM is not a failure: the script does nothing and the
+fails 3 times or any boot step aborts (FAILED marker), or a DONE or FAILED marker already exists
+(that boot only stops the VM; it leaves the marker and the uploaded log untouched). In each
+case the VM resizes the MIG to 0. A FAILED run never retrains by itself, so a missing IAM role cannot
+cause a billing retrain loop. To retry after fixing the cause, read `log_<tag>.txt`, then delete the marker:
+`gcloud storage rm "gs://$BUCKET/status/FAILED_<tag>"` and rerun `create_template.sh`. A preemption, a plain VM delete or any other SIGTERM is not a failure: the script does nothing and the
 MIG recreates the VM. A MIG-managed VM resizes the MIG; any other VM deletes itself. If both fail the VM
 runs `poweroff`; a MIG may recreate a powered-off VM, and that boot then finds the marker and tries again.
-Corpus prep that fails leaves `gs://$BUCKET/data/v2/PREPARE_FAILED` (log tail) and deletes its VM.
+Corpus prep deletes its own VM when it finishes or fails. A failure leaves `gs://$BUCKET/data/v2/PREPARE_FAILED` (log tail);
+a later success removes that marker.
+
+SFT starts from a pretrained checkpoint: set `INIT_FROM=/mnt/ckpt/<pretrain-tag>/best.ckpt` (in `env` or on the
+command line) with `RUN=sft` and a new `TAG`. It becomes the `tl-init-from` metadata key and `run.init_from`;
+a restarted job resumes from its own checkpoints first, so `init_from` only applies to a fresh start.
 
 Unverified: whether a MIG works with `a3-highgpu-1g` (H100). If MIG creation fails, the fallback is a
 single spot VM named `$FALLBACK_VM` made from the same template plus a manual restart after each preemption:
@@ -97,7 +121,18 @@ resumes from the checkpoint. The fallback VM deletes itself when training ends. 
 
 ## 4. Verify resume (small run first)
 
-Use `run=smoke`/`model=tiny`, delete the VM, and confirm the MIG recreates it and the same W&B run continues.
+Run this after corpus prep (section 2; it trains on the real `fineweb` data, so `PREPARE_DONE` must exist) and
+before the long pretrain. Use the `resume_test` run (block 256, batch 8, 3000 steps, a checkpoint every minute):
+
+```bash
+source scripts/gcp/env
+MODEL=main DATA=fineweb RUN=resume_test TAG=resume-test-1 GPU_TYPE=l4 scripts/gcp/create_template.sh
+```
+
+Command-line values beat `env`. Wait until `/mnt/ckpt/resume-test-1/` holds a `.ckpt` file (a few minutes), delete the VM
+(`gcloud compute instances delete <vm> --zone "$ZONE" --project "$PROJECT"`), and confirm the MIG recreates it, the log
+says `resuming from ...`, the step counter does not restart at 0 and the same W&B run continues. When it finishes (DONE marker) the MIG is
+resized to 0; the real run then starts in section 3 with its own `TAG`.
 
 ## 5. Stop billing but keep data
 
