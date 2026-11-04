@@ -101,6 +101,23 @@ def test_chat_template_matches_training_format(out):
     assert got == "<|user|>hi<|eot|><|assistant|>yo<|eot|><|user|>z<|eot|><|assistant|>"
 
 
+def test_chat_template_skips_system_and_strips_like_prepare(out):
+    from tinyllm.v2.prepare import render_messages
+
+    msgs = [{"role": "system", "content": "be nice"}, {"role": "user", "content": " hi \n"},
+            {"role": "assistant", "content": "yo "}]
+    t = AutoTokenizer.from_pretrained(out)
+    got = t.apply_chat_template(msgs, tokenize=False)
+    assert got == render_messages(msgs) == "<|user|>hi<|eot|><|assistant|>yo<|eot|>"
+
+
+def test_export_cli(ckpt, tok_json, tmp_path):
+    from tinyllm.v2.export import main
+
+    main(["--ckpt", str(ckpt), "--tokenizer", str(tok_json), "--out", str(tmp_path / "o")])
+    assert (tmp_path / "o" / "model.safetensors").exists() and (tmp_path / "o" / "tokenizer.json").exists()
+
+
 def test_build_prompt_matches_training_render_for_short_history(tok):
     ids = build_prompt([("user", "hi"), ("assistant", "yo"), ("user", "z")], tok,
                        max_len=64, max_new_tokens=8)

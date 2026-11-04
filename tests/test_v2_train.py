@@ -30,6 +30,8 @@ def overrides(tmp_path, ckpt_dir, **extra):
     base = {
         "model": "tiny", "run": "smoke", "tag": "t", "wandb.mode": "disabled",
         "data.train_bin": train_bin, "data.val_bin": val_bin, "ckpt_dir": ckpt_dir,
+        # the repo tokenizer is bigger than the tiny model's vocab; tests that need one pass their own
+        "data.tokenizer": "null", "data.chars_per_token": "null",
     }
     return [f"{k}={v}" for k, v in {**base, **extra}.items()]
 
@@ -214,9 +216,13 @@ def test_smoke_config_disables_sampling(tmp_path):
 
 
 def test_run_config_enables_sampling_with_data_tokenizer(tmp_path):
+    from tinyllm.tokenizer import train_tokenizer
+
+    tok_path = tmp_path / "tok.json"
+    train_tokenizer(["Once upon a time Lily ran home."] * 50, vocab_size=64).save(str(tok_path))
     ov = overrides(tmp_path, tmp_path / "ck") + [
-        "run.samples.prompts=chat", "run.samples.every_n_steps=3",
-        f"data.tokenizer={ROOT / 'data' / 'tokenizer.json'}",
+        "run.samples.prompts=chat", "run.samples.every_n_steps=3", "model.vocab_size=300",
+        f"data.tokenizer={tok_path}",
     ]
     _, trainer, _, _ = build_run(compose_cfg(ov))
     cb = [c for c in trainer.callbacks if isinstance(c, SampleCallback)]
@@ -230,6 +236,7 @@ def test_training_run_with_sampling_enabled_completes(tmp_path):
     train_tokenizer(["Once upon a time Lily ran home."] * 50, vocab_size=64).save(str(tok_path))
     ov = overrides(tmp_path, tmp_path / "ck", **{"wandb.mode": "offline"}) + [
         "run.samples.prompts=chat", "run.samples.every_n_steps=2", f"data.tokenizer={tok_path}",
+        "model.vocab_size=300",
         f"wandb.dir={tmp_path / 'wb'}",
     ]
     main(ov)
@@ -275,3 +282,40 @@ def test_train_exits_nonzero_when_fit_returns_early(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as e:
         train(compose_cfg(overrides(tmp_path, tmp_path / "ck")))
     assert e.value.code not in (0, None)
+
+
+def test_build_run_rejects_tokenizer_larger_than_model_vocab(tmp_path):
+    from tinyllm.tokenizer import train_tokenizer
+
+    tok_path = tmp_path / "big.json"
+    train_tokenizer(["Once upon a time Lily ran home and played."] * 200, vocab_size=300).save(str(tok_path))
+    ov = overrides(tmp_path, tmp_path / "ck", **{"data.tokenizer": tok_path})  # tiny model: vocab 64
+    with pytest.raises(ValueError, match="vocab"):
+        build_run(compose_cfg(ov))
+
+
+def test_validation_logs_bits_per_char_from_meta_json(tmp_path):
+    import json
+
+    from tinyllm.v2.data import bits_per_char
+
+    train_bin, val_bin = write_bins(tmp_path)
+    val_bin.with_suffix(".meta.json").write_text(json.dumps({"tokens": 500, "chars": 2000}))
+    ov = overrides(tmp_path, tmp_path / "ck")
+    trainer = train(compose_cfg(ov))
+    m = trainer.callback_metrics
+    assert m["val/bits_per_char"].item() == pytest.approx(bits_per_char(m["val/loss"].item(), 4.0), rel=1e-4)
+
+
+def test_bits_per_char_uses_config_chars_per_token_and_is_absent_without_either(tmp_path):
+    trainer = train(compose_cfg(overrides(tmp_path, tmp_path / "a", **{"data.chars_per_token": 4.088})))
+    from tinyllm.v2.data import bits_per_char
+
+    m = trainer.callback_metrics
+    assert m["val/bits_per_char"].item() == pytest.approx(bits_per_char(m["val/loss"].item(), 4.088), rel=1e-4)
+    trainer = train(compose_cfg(overrides(tmp_path, tmp_path / "b")))
+    assert "val/bits_per_char" not in trainer.callback_metrics
+
+
+def test_stories_data_config_carries_v1_chars_per_token():
+    assert compose_cfg(["model=tiny", "run=smoke", "tag=t", "data=stories"]).data.chars_per_token == 4.088

@@ -1,5 +1,6 @@
 """Export a training checkpoint as a plain Hugging Face model + tokenizer directory."""
 
+import argparse
 from pathlib import Path
 
 import torch
@@ -9,11 +10,12 @@ from tinyllm.tokenizer import ASSISTANT, BOS, EOT, USER
 from tinyllm.v2.modeling import build_model
 from tinyllm.v2.train import WEIGHTS_ONLY
 
-# Same layout as samples.render_chat: no BOS, the generation prompt is the assistant marker.
+# Same layout as samples.render_chat and prepare.render_messages: no BOS, text stripped, system
+# (and any other non user/assistant) messages dropped, the generation prompt is the assistant marker.
 CHAT_TEMPLATE = (
     "{% for m in messages %}"
-    f"{{% if m['role'] == 'user' %}}{USER}{{% else %}}{ASSISTANT}{{% endif %}}"
-    f"{{{{ m['content'] }}}}{EOT}"
+    f"{{% if m['role'] == 'user' %}}{USER}{{{{ m['content'] | trim }}}}{EOT}"
+    f"{{% elif m['role'] == 'assistant' %}}{ASSISTANT}{{{{ m['content'] | trim }}}}{EOT}{{% endif %}}"
     "{% endfor %}"
     f"{{% if add_generation_prompt %}}{ASSISTANT}{{% endif %}}"
 )
@@ -45,3 +47,16 @@ def export(ckpt: Path, tokenizer_json: Path, out: Path) -> None:
     out = Path(out)
     model.save_pretrained(out, safe_serialization=True)
     tok.save_pretrained(out)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Export a training checkpoint as a Hugging Face model.")
+    ap.add_argument("--ckpt", required=True, type=Path)
+    ap.add_argument("--tokenizer", required=True, type=Path, help="tokenizer.json")
+    ap.add_argument("--out", required=True, type=Path)
+    args = ap.parse_args(argv)
+    export(args.ckpt, args.tokenizer, args.out)
+
+
+if __name__ == "__main__":
+    main()

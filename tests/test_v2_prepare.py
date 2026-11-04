@@ -66,3 +66,11 @@ def test_take_chars_leaves_the_rest_of_the_stream_untouched():
     head = list(take_chars(it, 5))
     assert head == ["aaaa", "bbbb"]
     assert list(it) == ["cccc", "dddd"]
+
+
+def test_render_strips_text_like_build_prompt():
+    assert render_turns(["  a\n", " b "]) == "<|user|>a<|eot|><|assistant|>b<|eot|>"
+    assert render_turns(["a", "  \n"]) is None
+    out = render_messages([{"role": "user", "content": " hi \n"}, {"role": "tool", "content": "x"},
+                           {"role": "assistant", "content": "  "}, {"role": "assistant", "content": "\nyo "}])
+    assert out == "<|user|>hi<|eot|><|assistant|>yo<|eot|>"

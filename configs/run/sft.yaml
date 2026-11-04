@@ -10,7 +10,9 @@ lr: 2.0e-5
 min_lr: 2.0e-6
 warmup: 100
 grad_clip: 1.0
-weight_decay: 0.0
+# 0.1 matches v1's SFT lesson. LlamaConfig has no residual dropout here, so there is none
+# to set; weight decay is the only regulariser.
+weight_decay: 0.1
 log_every_n_steps: 10
 save_every_minutes: 30
 init_from: null

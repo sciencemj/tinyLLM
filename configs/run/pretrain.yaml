@@ -1,7 +1,9 @@
 # PROVISIONAL: batch size, steps and LR are set after the GPU benchmark.
 block_size: 1024
 batch_size: 32
-steps_per_chunk: 100
+# One validation pass and one best.ckpt write happen per chunk (an epoch), and both are costly
+# at this scale, so use 5000 steps per chunk instead of the small-run 100.
+steps_per_chunk: 5000
 val_batches: 20
 num_workers: 4
 total_steps: 100000

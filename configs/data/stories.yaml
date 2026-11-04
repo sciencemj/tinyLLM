@@ -1,3 +1,4 @@
 train_bin: data/stories_train.bin
 val_bin: data/stories_val.bin
 tokenizer: data/tokenizer.json
+chars_per_token: 4.088  # v1 stories chars per token; data/stories_val.bin has no meta.json

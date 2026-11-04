@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from omegaconf import DictConfig, OmegaConf
 
 from tinyllm.schedule import lr_at
+from tinyllm.v2.data import bits_per_char
 from tinyllm.v2.modeling import build_model
 
 
@@ -36,6 +37,7 @@ class LlamaLM(L.LightningModule):
         self.model = build_model(model_cfg)
         self.lr, self.min_lr, self.warmup = lr, min_lr, warmup
         self.total_steps, self.weight_decay = total_steps, weight_decay
+        self.chars_per_token = None  # set by train.build_run; enables val/bits_per_char
 
     def compute_loss(self, x, y):
         # Targets arrive pre-shifted, so take cross entropy on logits directly (no `labels=`).
@@ -49,7 +51,11 @@ class LlamaLM(L.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        self.log("val/loss", self.compute_loss(*batch), prog_bar=True, sync_dist=True)
+        loss = self.compute_loss(*batch)
+        self.log("val/loss", loss, prog_bar=True, sync_dist=True)
+        if self.chars_per_token:
+            # Linear in the loss, so the epoch mean of this equals bits/char of the mean loss.
+            self.log("val/bits_per_char", bits_per_char(loss, self.chars_per_token), sync_dist=True)
 
     def configure_optimizers(self):
         decay, no_decay = param_groups(self, self.weight_decay)

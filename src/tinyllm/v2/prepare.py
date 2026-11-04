@@ -20,7 +20,8 @@ TOKENIZER_FINEWEB_CHARS = 2_000_000_000
 
 def render_turns(utterances):
     """번갈아 말하는 발화 목록을 user/assistant 턴으로 렌더링한다."""
-    if len(utterances) < 2 or any(not u.strip() for u in utterances):
+    utterances = [u.strip() for u in utterances]  # build_prompt strips too: same text at train and chat
+    if len(utterances) < 2 or any(not u for u in utterances):
         return None
     parts = []
     for i, u in enumerate(utterances):
@@ -33,11 +34,12 @@ def render_messages(messages):
     parts = []
     has_assistant = False
     for m in messages:
-        if m["role"] not in ("user", "assistant") or not m["content"].strip():
+        content = m["content"].strip()  # build_prompt strips too: same text at train and chat
+        if m["role"] not in ("user", "assistant") or not content:
             continue
         has_assistant |= m["role"] == "assistant"
         tag = USER if m["role"] == "user" else ASSISTANT
-        parts.append(f"{tag}{m['content']}{EOT}")
+        parts.append(f"{tag}{content}{EOT}")
     return "".join(parts) if has_assistant else None
 
 

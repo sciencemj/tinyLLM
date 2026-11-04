@@ -17,7 +17,7 @@ from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig
 from tokenizers import Tokenizer
 
-from tinyllm.v2.data import BinData
+from tinyllm.v2.data import BinData, chars_per_token
 from tinyllm.v2.module import LlamaLM
 from tinyllm.v2.samples import SampleCallback, prompts_for
 
@@ -72,6 +72,12 @@ def make_logger(cfg) -> WandbLogger:
 def build_run(cfg):
     """Return (module, trainer, datamodule, ckpt_path). ckpt_path is None for a fresh start."""
     run, ckpt_dir = cfg.run, Path(cfg.ckpt_dir)
+    tok_path = cfg.data.get("tokenizer")
+    if tok_path:
+        vocab = Tokenizer.from_file(str(tok_path)).get_vocab_size()
+        if vocab > cfg.model.vocab_size:
+            raise ValueError(f"tokenizer {tok_path} has {vocab} tokens but model.vocab_size is "
+                             f"{cfg.model.vocab_size}: ids would index outside the embedding")
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     ckpt_path = resolve_resume(ckpt_dir)
     if ckpt_path is None:
@@ -81,6 +87,10 @@ def build_run(cfg):
         cfg.model, lr=run.lr, min_lr=run.min_lr, warmup=run.warmup,
         total_steps=run.total_steps, weight_decay=run.weight_decay,
     )
+    cpt = cfg.data.get("chars_per_token")  # v1 data has no meta.json: its number comes from config
+    if cpt is None and Path(cfg.data.val_bin).with_suffix(".meta.json").exists():
+        cpt = chars_per_token(cfg.data.val_bin)
+    lm.chars_per_token = cpt
     if ckpt_path is None and run.init_from:
         state = torch.load(run.init_from, map_location="cpu", weights_only=WEIGHTS_ONLY)
         lm.load_state_dict(state["state_dict"])
