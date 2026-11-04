@@ -2,7 +2,9 @@
 
 import hashlib
 import os
+import pickle
 import sys
+import warnings
 from datetime import timedelta
 from pathlib import Path
 
@@ -34,13 +36,19 @@ def resolve_resume(ckpt_dir: Path) -> Path | None:
     """Newest checkpoint in `ckpt_dir` that loads. A write cut off by preemption does not."""
     ckpt_dir = Path(ckpt_dir)
     if not ckpt_dir.is_dir():
+        print(f"no checkpoint directory {ckpt_dir}: fresh start")
         return None
     for path in sorted(ckpt_dir.glob("*.ckpt"), key=lambda p: p.stat().st_mtime, reverse=True):
         try:
             torch.load(path, map_location="cpu", weights_only=WEIGHTS_ONLY)
-        except Exception:
+        except (RuntimeError, EOFError, pickle.UnpicklingError) as e:
+            # Corruption only. OSError (a flaky mount) and MemoryError must propagate, or a
+            # transient failure would look like "no checkpoint" and restart from step 0.
+            warnings.warn(f"skipping unreadable checkpoint {path}: {e!r}")
             continue
+        print(f"resuming from {path}")
         return path
+    print(f"no loadable checkpoint in {ckpt_dir}: fresh start")
     return None
 
 
@@ -51,7 +59,7 @@ def make_logger(cfg) -> WandbLogger:
     # The id is a function of the tag, so a restarted job continues the same W&B run.
     run_id = hashlib.sha1(str(cfg.tag).encode()).hexdigest()[:16]
     return WandbLogger(
-        project=cfg.wandb.project, name=str(cfg.tag), id=run_id, save_dir=str(cfg.ckpt_dir),
+        project=cfg.wandb.project, name=str(cfg.tag), id=run_id, save_dir=str(cfg.wandb.dir),
         resume="allow", mode=mode,
     )
 
@@ -90,6 +98,7 @@ def build_run(cfg):
         max_steps=run.total_steps, accelerator="auto",
         precision="bf16-mixed" if torch.cuda.is_available() else "32-true",
         logger=make_logger(cfg), callbacks=callbacks, log_every_n_steps=run.log_every_n_steps,
+        gradient_clip_val=run.grad_clip,
         default_root_dir=ckpt_dir, enable_progress_bar=sys.stderr.isatty(),
     )
     return lm, trainer, data, ckpt_path

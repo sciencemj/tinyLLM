@@ -14,6 +14,7 @@ seed: 1234
 
 wandb:
   project: tinyllm-v2
+  dir: out/wandb  # local disk: keep live W&B files off the (FUSE) checkpoint path
   mode: online  # falls back to offline when WANDB_API_KEY is unset
 
 hydra:

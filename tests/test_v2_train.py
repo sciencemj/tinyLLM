@@ -161,3 +161,47 @@ def test_resume_wins_over_init_from(tmp_path):
     run_cfg = compose_cfg(overrides(tmp_path, ckpt_dir, **{"run.init_from": other}))
     _, _, _, ckpt_path = build_run(run_cfg)
     assert ckpt_path is not None and ckpt_path.parent == ckpt_dir
+
+
+def test_trainer_receives_grad_clip(tmp_path):
+    run_cfg = compose_cfg(overrides(tmp_path, tmp_path / "ck"))
+    _, trainer, _, _ = build_run(run_cfg)
+    assert run_cfg.run.grad_clip == 1.0
+    assert trainer.gradient_clip_val == 1.0
+
+
+def test_resolve_resume_warns_on_truncated_file(tmp_path):
+    good = make_ckpt(tmp_path / "step-4.ckpt")
+    os.utime(good, (1, 1))
+    bad = tmp_path / "last.ckpt"
+    bad.write_bytes(b"xx")
+    with pytest.warns(UserWarning, match="last.ckpt"):
+        assert resolve_resume(tmp_path) == good
+
+
+def test_resolve_resume_propagates_oserror(tmp_path, monkeypatch):
+    make_ckpt(tmp_path / "last.ckpt")
+
+    def flaky(*a, **k):
+        raise OSError("fuse mount hiccup")
+
+    monkeypatch.setattr(torch, "load", flaky)
+    with pytest.raises(OSError):
+        resolve_resume(tmp_path)
+
+
+def test_resolve_resume_reports_decision(tmp_path, capsys):
+    resolve_resume(tmp_path)
+    assert "fresh start" in capsys.readouterr().out
+    ckpt = make_ckpt(tmp_path / "last.ckpt")
+    resolve_resume(tmp_path)
+    assert f"resuming from {ckpt}" in capsys.readouterr().out
+
+
+def test_wandb_uses_wandb_dir_not_ckpt_dir(tmp_path):
+    run_cfg = compose_cfg(
+        ["model=tiny", "run=smoke", "tag=a", f"ckpt_dir={tmp_path / 'ck'}", f"wandb.dir={tmp_path / 'w'}"]
+    )
+    init = make_logger(run_cfg)._wandb_init
+    assert init["dir"] == str(tmp_path / "w")
+    assert make_logger(cfg("a"))._wandb_init["dir"] == "out/wandb"
