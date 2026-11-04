@@ -52,12 +52,13 @@ fi
 
 # Both machine types have the GPU built in, so no --accelerator flag.
 # GPU VMs cannot live-migrate: TERMINATE on maintenance. Spot only; never STANDARD for GPU.
+# STOP, not DELETE: MIGs reject spot templates whose termination action is DELETE.
 # Metadata carries names only. The W&B key is fetched from Secret Manager at boot.
 gcloud compute instance-templates create "$TEMPLATE_NAME" \
   --project "$PROJECT" \
   --machine-type "$MACHINE_TYPE" \
   --provisioning-model SPOT \
-  --instance-termination-action DELETE \
+  --instance-termination-action STOP \
   --maintenance-policy TERMINATE \
   --image-family "$IMAGE_FAMILY" --image-project "$IMAGE_PROJECT" \
   --boot-disk-size "${BOOT_DISK_GB}GB" --boot-disk-type pd-ssd \

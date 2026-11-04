@@ -52,6 +52,12 @@ def test_secret_not_in_metadata():
     assert "WANDB_API_KEY" not in t
 
 
+def test_template_termination_action_is_accepted_by_migs():
+    t = text("create_template.sh")
+    assert "--instance-termination-action STOP" in t
+    assert "--instance-termination-action DELETE" not in t
+
+
 def test_prepare_uses_standard_vm():
     t = text("prepare_data.sh")
     assert "--provisioning-model STANDARD" in t and "SPOT" not in t

@@ -4,8 +4,9 @@ Layout: a size-1 managed instance group (MIG) built from a spot instance templat
 preemption the MIG recreates the VM, `startup.sh` runs again, and training resumes by itself
 (`resolve_resume`) from the checkpoint directory `/mnt/ckpt/<tag>` (gcsfuse over the bucket).
 Data is copied from GCS to the VM's local disk at boot (random reads over gcsfuse are too slow).
-Because the template uses the DELETE termination action, a recreated VM has a fresh disk and
-re-copies the data (80GB+) before it trains; expect several minutes of lost time per preemption.
+The template uses the STOP termination action because MIGs reject DELETE on spot templates. A VM the
+MIG recreates has a fresh disk and re-copies the data (about 41GB) before it trains; expect several
+minutes of lost time per preemption. Unverified: how the MIG treats a VM stopped by a real preemption.
 
 All scripts read `scripts/gcp/env` (copy from `env.example`). No script contains a secret.
 
@@ -125,7 +126,7 @@ single spot VM named `$FALLBACK_VM` made from the same template plus a manual re
 ```bash
 gcloud compute instances create "$FALLBACK_VM" --project "$PROJECT" --zone "$ZONE" --source-instance-template "$TEMPLATE_NAME"
 ```
-With DELETE termination a preempted VM disappears; rerun that command to bring it back, and `startup.sh`
+With STOP termination a preempted VM stays stopped; delete it and rerun that command to bring it back, and `startup.sh`
 resumes from the checkpoint. The fallback VM deletes itself when training ends. Teardown covers `$FALLBACK_VM`.
 
 ## 4. Verify resume (small run first)

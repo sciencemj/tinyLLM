@@ -6,6 +6,7 @@ import argparse
 import itertools
 import json
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -154,6 +155,11 @@ def main():
     p.add_argument("--max-tokens", type=int, default=30_000_000_000)
     args = p.parse_args()
     prepare(args.out, args.max_tokens)
+    # All files are complete here. Exit hard: on the 20B-token prep VM the interpreter hung forever
+    # in thread shutdown after this point, which blocked the upload and kept the VM billing.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
 
 
 if __name__ == "__main__":
