@@ -234,3 +234,12 @@ def test_training_run_with_sampling_enabled_completes(tmp_path):
     ]
     main(ov)
     assert (tmp_path / "ck" / "last.ckpt").exists()
+
+
+@pytest.mark.parametrize("data,path", [
+    ("fineweb", "data/v2/tokenizer.json"), ("chat", "data/v2/tokenizer.json"),
+    ("stories", "data/tokenizer.json"),
+])
+def test_data_config_tokenizer_path(data, path):
+    cfg = compose_cfg(["model=tiny", "run=smoke", "tag=t", f"data={data}"])
+    assert cfg.data.tokenizer == path
