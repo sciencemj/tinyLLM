@@ -18,13 +18,20 @@ POLL_SECS="${POLL_SECS:-15}"
 
 # Replace any earlier attempt (for example an H100 try before falling back to L4), so two
 # groups can never run side by side on the same checkpoint directory and W&B run.
-existing="$(gcloud compute instance-groups managed list --project "$PROJECT" --filter "name=$MIG_NAME" --format 'value(name,zone)')"
+existing="$(gcloud compute instance-groups managed list --project "$PROJECT" --filter "name='$MIG_NAME'" --format 'value(name,zone)')"
 if [ -n "$existing" ]; then
   while read -r name zone; do
     gcloud compute instance-groups managed delete "$name" --project "$PROJECT" --zone "${zone##*/}" --quiet
   done <<< "$existing"
 fi
-existing="$(gcloud compute instance-templates list --project "$PROJECT" --filter "name=$TEMPLATE_NAME" --format 'value(name)')"
+# A fallback VM from an earlier attempt would share the checkpoint directory and W&B run.
+existing="$(gcloud compute instances list --project "$PROJECT" --filter "name='$FALLBACK_VM'" --format 'value(name,zone)')"
+if [ -n "$existing" ]; then
+  while read -r name zone; do
+    gcloud compute instances delete "$name" --project "$PROJECT" --zone "${zone##*/}" --quiet
+  done <<< "$existing"
+fi
+existing="$(gcloud compute instance-templates list --project "$PROJECT" --filter "name='$TEMPLATE_NAME'" --format 'value(name)')"
 if [ -n "$existing" ]; then
   gcloud compute instance-templates delete "$TEMPLATE_NAME" --project "$PROJECT" --quiet
 fi

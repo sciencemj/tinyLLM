@@ -27,13 +27,13 @@ Prerequisites, in order:
 1. Push the branch so the VM can clone it. The repo is public, so a plain HTTPS clone works
    once the branch exists on GitHub: `git push -u origin feat/tinyllm-v2`. The VM checks out
    `BRANCH` from `env`, so that name must match.
-2. Enable the APIs once per project:
+2. Create the env file first (`scripts/gcp/.gitignore` keeps it out of git; it holds no secrets),
+   then edit it: `cp scripts/gcp/env.example scripts/gcp/env`
+3. Enable the APIs once per project (this sources the env file from step 2):
    ```bash
    source scripts/gcp/env
    gcloud services enable compute.googleapis.com secretmanager.googleapis.com storage.googleapis.com --project "$PROJECT"
    ```
-3. Copy and edit the env file (`scripts/gcp/env` is git-ignored; it holds no secrets):
-   `cp scripts/gcp/env.example scripts/gcp/env`
 4. Create the bucket and the secret (every command needs `--project`):
    ```bash
    source scripts/gcp/env
@@ -76,11 +76,16 @@ To fall back to L4, just rerun with `GPU_TYPE=l4`.
 `startup.sh` runs in the foreground on every boot: it clones the branch, runs `uv sync`, copies data if
 missing (and fails loudly if any file is missing), checks the GPU with `nvidia-smi` and torch, mounts
 checkpoints, fetches the W&B key from Secret Manager (no echo, no tracing; an empty key fails) and trains.
-Logs on the VM: `/var/log/tinyllm-train.log`.
+Logs: the last 2000 lines of `/var/log/tinyllm-train.log` are uploaded to
+`gs://$BUCKET/status/log_<tag>.txt` before the VM is stopped (the VM disk is deleted with the VM), so read
+that file after a DONE or FAILED run. While the VM runs, the log is at `/var/log/tinyllm-train.log`.
 
 When billing stops by itself: training finishes (DONE marker in `gs://$BUCKET/status/`), training
 fails 3 times or any boot step aborts (FAILED marker), or a DONE marker already exists. In each
-case the VM resizes the MIG to 0. A preemption is not a failure; the MIG recreates the VM.
+case the VM resizes the MIG to 0. A preemption, a plain VM delete or any other SIGTERM is not a failure: the script does nothing and the
+MIG recreates the VM. A MIG-managed VM resizes the MIG; any other VM deletes itself. If both fail the VM
+runs `poweroff`; a MIG may recreate a powered-off VM, and that boot then finds the marker and tries again.
+Corpus prep that fails leaves `gs://$BUCKET/data/v2/PREPARE_FAILED` (log tail) and deletes its VM.
 
 Unverified: whether a MIG works with `a3-highgpu-1g` (H100). If MIG creation fails, the fallback is a
 single spot VM named `$FALLBACK_VM` made from the same template plus a manual restart after each preemption:

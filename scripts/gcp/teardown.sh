@@ -36,15 +36,17 @@ try_delete() {
   fi
 }
 
-NAMES="name~^($MIG_NAME|$FALLBACK_VM|$PREPARE_VM)(-|$)"
+# The regex operand MUST be single-quoted: unquoted, the filter parser stops at "(" and the
+# filter silently selects nothing, so deletes and the leftover check would do nothing.
+NAMES="name~'^($MIG_NAME|$FALLBACK_VM|$PREPARE_VM)(-|\$)'"
 
 # 1. Compute. Anything that bills by the hour goes before data is touched.
-migs="$(gcloud compute instance-groups managed list --project "$PROJECT" --filter "name=$MIG_NAME" --format 'value(name,zone)')"
+migs="$(gcloud compute instance-groups managed list --project "$PROJECT" --filter "name='$MIG_NAME'" --format 'value(name,zone)')"
 while read -r name zone; do
   [ -n "$name" ] || continue
   try_delete "MIG $name" gcloud compute instance-groups managed delete "$name" --project "$PROJECT" --zone "${zone##*/}" --quiet
 done <<< "$migs"
-vms="$(gcloud compute instances list --project "$PROJECT" --filter "labels.app=tinyllm-v2 OR $NAMES" --format 'value(name,zone)')"
+vms="$(gcloud compute instances list --project "$PROJECT" --filter "labels.app='tinyllm-v2' OR $NAMES" --format 'value(name,zone)')"
 while read -r name zone; do
   [ -n "$name" ] || continue
   try_delete "VM $name" gcloud compute instances delete "$name" --project "$PROJECT" --zone "${zone##*/}" --quiet
@@ -68,12 +70,12 @@ try_delete "secret $SECRET_NAME" gcloud secrets delete "$SECRET_NAME" --project 
 left=""
 # A listing failure must abort (set -e): it is never read as "nothing left".
 check() { local label="$1" out; shift; out="$("$@")"; [ -z "$out" ] || left+="$label: $out"$'\n'; }
-check "managed instance groups" gcloud compute instance-groups managed list --project "$PROJECT" --filter "name=$MIG_NAME" --format 'value(name)'
-check "VMs" gcloud compute instances list --project "$PROJECT" --filter "labels.app=tinyllm-v2 OR $NAMES" --format 'value(name)'
-check "templates" gcloud compute instance-templates list --project "$PROJECT" --filter "name=$TEMPLATE_NAME" --format 'value(name)'
+check "managed instance groups" gcloud compute instance-groups managed list --project "$PROJECT" --filter "name='$MIG_NAME'" --format 'value(name)'
+check "VMs" gcloud compute instances list --project "$PROJECT" --filter "labels.app='tinyllm-v2' OR $NAMES" --format 'value(name)'
+check "templates" gcloud compute instance-templates list --project "$PROJECT" --filter "name='$TEMPLATE_NAME'" --format 'value(name)'
 check "disks" gcloud compute disks list --project "$PROJECT" --filter "$NAMES" --format 'value(name)'
-check "buckets" gcloud storage buckets list --project "$PROJECT" --filter "name=$BUCKET" --format 'value(name)'
-check "secrets" gcloud secrets list --project "$PROJECT" --filter "name~$SECRET_NAME" --format 'value(name)'
+check "buckets" gcloud storage buckets list --project "$PROJECT" --filter "name='$BUCKET'" --format 'value(name)'
+check "secrets" gcloud secrets list --project "$PROJECT" --filter "name~'$SECRET_NAME'" --format 'value(name)'
 if [ -n "$left" ] || [ "$FAILED" -ne 0 ]; then
   echo "Teardown INCOMPLETE. Still present:" >&2
   printf '%s' "$left" >&2

@@ -253,3 +253,25 @@ def test_resolve_resume_raises_when_listing_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "scandir", boom)
     with pytest.raises(OSError):
         resolve_resume(tmp_path)
+
+
+def test_train_exits_nonzero_when_fit_is_cut_short(tmp_path, monkeypatch):
+    # Lightning turns SIGTERM mid-fit into SystemExit(0); that must not look like "finished".
+    import lightning as L
+
+    def cut_short(self, *a, **k):
+        raise SystemExit(0)
+
+    monkeypatch.setattr(L.Trainer, "fit", cut_short)
+    with pytest.raises(SystemExit) as e:
+        train(compose_cfg(overrides(tmp_path, tmp_path / "ck")))
+    assert e.value.code not in (0, None)
+
+
+def test_train_exits_nonzero_when_fit_returns_early(tmp_path, monkeypatch):
+    import lightning as L
+
+    monkeypatch.setattr(L.Trainer, "fit", lambda self, *a, **k: None)
+    with pytest.raises(SystemExit) as e:
+        train(compose_cfg(overrides(tmp_path, tmp_path / "ck")))
+    assert e.value.code not in (0, None)

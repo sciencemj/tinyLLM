@@ -117,7 +117,19 @@ def build_run(cfg):
 
 def train(cfg):
     lm, trainer, data, ckpt_path = build_run(cfg)
-    trainer.fit(lm, datamodule=data, ckpt_path=ckpt_path, weights_only=WEIGHTS_ONLY)
+    total = cfg.run.total_steps
+    try:
+        trainer.fit(lm, datamodule=data, ckpt_path=ckpt_path, weights_only=WEIGHTS_ONLY)
+    except SystemExit:
+        # Lightning turns SIGTERM mid-fit into SystemExit(0). A run that stopped before
+        # total_steps is not finished, whatever the status says: the GCP wrapper records DONE
+        # on status 0 and DONE blocks every later boot.
+        if trainer.global_step < total:
+            raise SystemExit(1)
+        raise
+    if trainer.global_step < total:
+        print(f"stopped at step {trainer.global_step} of {total}", file=sys.stderr)
+        raise SystemExit(1)
     # The time-based callback may never have fired in a short run, so always leave `last`.
     last = Path(cfg.ckpt_dir) / "last.ckpt"
     tmp = last.with_suffix(".tmp")

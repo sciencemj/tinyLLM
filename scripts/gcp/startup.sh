@@ -3,16 +3,37 @@
 # mount, copy data if missing, update the repo, run training in the foreground.
 # Training resumes itself via tinyllm.v2.train.resolve_resume from the stable ckpt_dir.
 #
-# Exit policy (so a GPU VM never idles while billing):
-#   training succeeds                  -> DONE marker in the bucket, MIG resized to 0
-#   training fails 3 times, or any boot step aborts -> FAILED marker, MIG resized to 0
-#   a DONE marker already exists       -> do not train, MIG resized to 0
-# A preemption kills the VM without running the exit trap; the MIG recreates it.
+# One exit path, so a GPU VM never idles while billing:
+#   SIGTERM/INT/HUP (shutdown, preemption, VM delete) -> do nothing: no marker, no resize
+#   training finished                  -> finish DONE
+#   training failed 3 times, or any boot step failed -> finish FAILED
+#   a DONE marker already exists       -> finish DONE, no training
+#   finish = marker + log tail to the bucket, then stop the VM: resize the MIG to 0 (in a MIG)
+#   or delete itself (not in a MIG), and `poweroff` if that fails.
+#   Failure before the metadata is read (finish cannot know the bucket) -> poweroff.
 set -euo pipefail
 set +x   # never trace: the W&B key passes through this script
 export HOME="${HOME:-/root}"
+LOG="${LOG_FILE:-/var/log/tinyllm-train.log}"
+mkdir -p "$(dirname "$LOG")"; : >> "$LOG"
+FINISHED=""; READY=""; TRAIN_PID=""
+
+on_exit() {
+  local rc=$?
+  [ "$rc" -ne 0 ] && [ -z "$FINISHED" ] || return 0
+  echo "startup failed (exit $rc)" | tee -a "$LOG" >&2
+  if [ -n "$READY" ]; then finish FAILED; else poweroff; fi
+}
+on_signal() {   # shutdown or preemption: the MIG decides what happens next
+  trap - EXIT
+  [ -z "$TRAIN_PID" ] || kill "$TRAIN_PID" 2>/dev/null || true
+  exit 143
+}
+trap on_exit EXIT
+trap on_signal TERM INT HUP
+
 MD_BASE=http://metadata.google.internal/computeMetadata/v1
-md() { curl -fsS --retry 5 --retry-connrefused -H 'Metadata-Flavor: Google' "$MD_BASE/$1"; }
+md() { curl -fsS --retry 5 --retry-delay 2 --retry-connrefused -H 'Metadata-Flavor: Google' "$MD_BASE/$1"; }
 
 BUCKET="$(md instance/attributes/tl-bucket)"; SECRET="$(md instance/attributes/tl-secret)"
 REPO="$(md instance/attributes/tl-repo)"; BRANCH="$(md instance/attributes/tl-branch)"
@@ -22,35 +43,26 @@ MIG="$(md instance/attributes/tl-mig)"; ZONE="$(md instance/attributes/tl-zone)"
 PROJECT="$(md instance/attributes/tl-project)"
 APP="${APP_DIR:-/opt/tinyllm}"
 CKPT_MNT="${CKPT_MNT:-/mnt/ckpt}"
-LOG="${LOG_FILE:-/var/log/tinyllm-train.log}"
 MAX_TRIES="${MAX_TRIES:-3}"
 RETRY_SLEEP="${RETRY_SLEEP:-30}"
-FINISHED=""
+READY=1
 
-# Stop billing: write the marker, then resize the MIG to 0. A VM that is not in a MIG
-# (the single-VM fallback) deletes itself instead. Disks, bucket and secret are kept.
+# Stop billing. Marker and log first (their failure never blocks the stop), then the VM itself:
+# created-by names the MIG only for MIG-managed VMs; a fallback VM deletes itself instead.
 finish() {
   local state="$1"
   FINISHED=1
   set +e
   printf '%s %s\n' "$state" "$(date -u +%FT%TZ)" | gcloud storage cp - "gs://$BUCKET/status/${state}_$TAG" \
     || echo "could not write $state marker" >&2
-  if ! gcloud compute instance-groups managed resize "$MIG" --size 0 --zone "$ZONE" --project "$PROJECT"; then
-    gcloud compute instances delete "$(md instance/name)" --zone "$ZONE" --project "$PROJECT" --quiet
+  tail -n 2000 "$LOG" | gcloud storage cp - "gs://$BUCKET/status/log_$TAG.txt" \
+    || echo "could not upload the log" >&2
+  if [[ "$(md instance/attributes/created-by 2>/dev/null)" == *instanceGroupManagers* ]]; then
+    gcloud compute instance-groups managed resize "$MIG" --size 0 --zone "$ZONE" --project "$PROJECT" && return 0
   fi
+  gcloud compute instances delete "$(md instance/name)" --zone "$ZONE" --project "$PROJECT" --quiet && return 0
+  poweroff
 }
-on_exit() {
-  local rc=$?
-  if [ "$rc" -ne 0 ] && [ -z "$FINISHED" ]; then
-    # Preempted: the VM is going away anyway and the MIG will recreate it. Do not give up.
-    if [ "$(md instance/preempted 2>/dev/null || true)" = "TRUE" ]; then
-      return
-    fi
-    echo "startup failed (exit $rc): stopping the GPU VM" >&2
-    finish FAILED
-  fi
-}
-trap on_exit EXIT
 
 if gcloud storage ls "gs://$BUCKET/status/DONE_$TAG" >/dev/null 2>&1; then
   echo "run $TAG already DONE: not training"
@@ -133,15 +145,19 @@ mkdir -p out/wandb   # live W&B files stay on local disk
 rc=1
 for ((i = 1; i <= MAX_TRIES; i++)); do
   rc=0
+  # Background + wait, so a SIGTERM reaches the trap at once instead of after training.
   uv run python -m tinyllm.v2.train \
     model="$MODEL" data="$DATA" run="$RUN" tag="$TAG" ckpt_dir="$CKPT_DIR" \
-    >> "$LOG" 2>&1 || rc=$?
+    >> "$LOG" 2>&1 &
+  TRAIN_PID=$!
+  wait "$TRAIN_PID" || rc=$?
+  TRAIN_PID=""
   [ "$rc" -eq 0 ] && break
-  echo "training attempt $i/$MAX_TRIES exited $rc" >&2
+  echo "training attempt $i/$MAX_TRIES exited $rc" | tee -a "$LOG" >&2
   sleep "$RETRY_SLEEP"
 done
 if [ "$rc" -eq 0 ]; then
   finish DONE
   exit 0
 fi
-exit "$rc"   # the exit trap writes FAILED and resizes the MIG to 0
+exit "$rc"   # the exit trap runs finish FAILED

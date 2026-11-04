@@ -86,6 +86,9 @@ case "$args" in
     dest="${@: -1}"; echo data > "$dest"; exit 0 ;;
   *"storage ls gs://"*"/status/"*) f done && exit 0; exit 1 ;;
   *"storage ls gs://"*) cat "$STUB_DIR/listing"; exit 0 ;;
+  *"instances create"*)
+    for a in "$@"; do case "$a" in startup-script=*) cp "${a#startup-script=}" "$STUB_DIR/prep_startup.sh" ;; esac; done
+    exit 0 ;;
   *"managed resize"*) f fail.resize && { echo "no permission" >&2; exit 1; }; exit 0 ;;
   *list-instances*) cat "$STUB_DIR/instances" 2>/dev/null; exit 0 ;;
 esac
@@ -104,11 +107,13 @@ exit 0
 
 CURL_STUB = r"""#!/usr/bin/env bash
 url="${@: -1}"
+[ -n "$STUB_MD_FAIL" ] && exit 1
 case "$url" in
   *tl-bucket) echo bkt ;; *tl-secret) echo sec ;; *tl-repo) echo https://example.invalid/r.git ;;
   *tl-branch) echo feat/x ;; *tl-model) echo tiny ;; *tl-data) echo fineweb ;; *tl-run) echo smoke ;;
   *tl-tag) echo t1 ;; *tl-mig) echo mig1 ;; *tl-zone) echo zone1 ;; *tl-project) echo proj1 ;;
-  *instance/name) echo vm1 ;; *instance/preempted) echo "${STUB_PREEMPTED:-FALSE}" ;;
+  *instance/name) echo vm1 ;;
+  *created-by) [ "${STUB_CREATED_BY:-mig}" = none ] && exit 1; echo projects/1/zones/zone1/instanceGroupManagers/mig1 ;;
   *) exit 1 ;;
 esac
 """
@@ -127,6 +132,7 @@ case "$*" in
   *"-c "*torch*) [ -f "$STUB_DIR/fail.cuda" ] && exit 1; exit 0 ;;
   *tinyllm.v2.train*)
     echo "train key=${WANDB_API_KEY:+set} $*" >> "$STUB_DIR/trains.log"
+    [ -f "$STUB_DIR/train_sleep" ] && { echo started > "$STUB_DIR/train_started"; exec sleep 30; }
     [ -f "$STUB_DIR/train_rc" ] && exit "$(cat "$STUB_DIR/train_rc")"; exit 0 ;;
 esac
 exit 0
@@ -140,6 +146,7 @@ def sandbox(tmp_path, monkeypatch):
     bodies = {"gcloud": GCLOUD_STUB, "curl": CURL_STUB, "git": GIT_STUB, "uv": UV_STUB}
     for name, body in bodies.items():
         (stub / name).write_text(body)
+    (stub / "poweroff").write_text('#!/usr/bin/env bash\necho poweroff >> "$STUB_DIR/calls.log"\n')
     for name in ("nvidia-smi", "gcsfuse", "apt-get", "mountpoint"):
         (stub / name).write_text("#!/usr/bin/env bash\n[ -f \"$STUB_DIR/fail.$(basename $0)\" ] && exit 1; exit 0\n")
     for p in stub.iterdir():
@@ -219,10 +226,24 @@ def test_startup_done_marker_skips_training_and_resizes(sandbox):
     assert resized_to_zero(sandbox)
 
 
-def test_startup_preemption_does_not_give_up(sandbox):
-    (sandbox / "fail.cp").write_text("")
-    r = run("startup.sh", env={**os.environ, "STUB_PREEMPTED": "TRUE"})
-    assert r.returncode != 0 and not resized_to_zero(sandbox)
+def test_startup_sigterm_mid_training_does_nothing(sandbox):
+    # Shutdown, preemption or a plain VM delete: no marker, no resize, no poweroff.
+    import signal
+    import time
+
+    (sandbox / "train_sleep").write_text("")
+    proc = subprocess.Popen(["bash", str(GCP / "startup.sh")], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    for _ in range(100):
+        if (sandbox / "train_started").exists():
+            break
+        time.sleep(0.1)
+    assert (sandbox / "train_started").exists(), "training never started"
+    proc.send_signal(signal.SIGTERM)
+    proc.communicate(timeout=20)
+    c = calls(sandbox)
+    assert proc.returncode == 143
+    assert "storage cp -" not in c and not resized_to_zero(sandbox)
+    assert "poweroff" not in c
 
 
 def test_startup_resize_failure_falls_back_to_deleting_self(sandbox):
@@ -347,5 +368,71 @@ def test_runbook_prerequisites_and_stop_billing():
     r = RUNBOOK.read_text()
     for k in ["git push", "managed resize", "--size 0", "compute.googleapis.com",
               "secretmanager.googleapis.com", "storage.googleapis.com", "source scripts/gcp/env",
-              "--project", "roles/compute.instanceAdmin.v1", "FALLBACK_VM"]:
+              "--project", "roles/compute.instanceAdmin.v1", "FALLBACK_VM", "poweroff", "log_<tag>.txt", "PREPARE_FAILED"]:
         assert k in r, k
+
+
+# --- round 2 -------------------------------------------------------------------------------
+def test_startup_both_stops_failing_powers_off(sandbox):
+    (sandbox / "fail.resize").write_text("")
+    (sandbox / "fail.vm").write_text("denied")
+    run("startup.sh")
+    assert "poweroff" in calls(sandbox)
+
+
+def test_startup_outside_a_mig_deletes_itself_not_resize(sandbox):
+    r = run("startup.sh", env={**os.environ, "STUB_CREATED_BY": "none"})
+    assert r.returncode == 0
+    assert "managed resize" not in calls(sandbox) and "compute instances delete vm1" in calls(sandbox)
+
+
+def test_startup_metadata_failure_powers_off(sandbox):
+    r = run("startup.sh", env={**os.environ, "STUB_MD_FAIL": "1"})
+    assert r.returncode != 0
+    assert "poweroff" in calls(sandbox) and "managed resize" not in calls(sandbox)
+
+
+def test_startup_uploads_log_and_upload_failure_does_not_block_resize(sandbox):
+    run("startup.sh")
+    assert "gs://bkt/status/log_t1.txt" in calls(sandbox)
+    (sandbox / "fail.marker").write_text("")
+    (sandbox / "calls.log").unlink()
+    run("startup.sh")
+    assert resized_to_zero(sandbox)
+
+
+def test_teardown_filters_are_quoted_for_the_gcloud_parser(sandbox):
+    # The stub cannot evaluate filters, so assert the exact quoted form that reaches gcloud.
+    run("teardown.sh", stdin=CONFIRM)
+    assert "name~'^(mig1|fb1|prep1)(-|$)'" in calls(sandbox)
+    assert "name='mig1'" in calls(sandbox)
+
+
+def test_every_regex_filter_operand_is_single_quoted():
+    for p in GCP.glob("*.sh"):
+        for m in re.finditer(r"name~(\S)", p.read_text()):
+            assert m.group(1) == "'", f"{p.name}: unquoted name~ operand"
+
+
+def test_create_template_removes_leftover_fallback_vm(sandbox):
+    (sandbox / "vm.list").write_text("fb1 zones/zone1\n")
+    (sandbox / "instances").write_text("RUNNING\n")
+    assert run("create_template.sh").returncode == 0
+    c = calls(sandbox)
+    assert c.index("instances delete fb1") < c.index("instance-templates create")
+
+
+def test_prepare_vm_script_marks_failure_and_cleans_up(sandbox):
+    assert run("prepare_data.sh", **{}).returncode == 2  # no argument: usage
+    r = subprocess.run(["bash", str(GCP / "prepare_data.sh"), "create"], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    script = (sandbox / "prep_startup.sh").read_text()
+    subprocess.run(["bash", "-n", str(sandbox / "prep_startup.sh")], check=True)
+    for k in ["DPkg::Lock::Timeout=300", "PREPARE_FAILED", "poweroff", "instances delete"]:
+        assert k in script, k
+    assert "--provisioning-model STANDARD" in calls(sandbox)
+
+
+def test_env_example_lists_instance_admin_role():
+    assert "roles/compute.instanceAdmin.v1" in (GCP / "env.example").read_text()
+    assert "git-ignored by you" not in (GCP / "env.example").read_text()

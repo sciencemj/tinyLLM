@@ -14,7 +14,18 @@ case "${1:-}" in
 #!/usr/bin/env bash
 set -euo pipefail
 export HOME=/root
-apt-get update -y && apt-get install -y git curl
+LOG=/var/log/tinyllm-prepare.log
+exec >> "\$LOG" 2>&1
+# On any failure: leave a PREPARE_FAILED marker with the log tail, then delete this VM
+# (poweroff if that fails). Nothing here may leave a billing VM idle.
+fail() {
+  set +e
+  tail -n 2000 "\$LOG" | gcloud storage cp - "gs://$BUCKET/data/v2/PREPARE_FAILED"
+  gcloud compute instances delete "\$(curl -fsS -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/name)" --zone "$ZONE" --project "$PROJECT" --quiet || poweroff
+}
+trap 'rc=\$?; [ "\$rc" -eq 0 ] || fail' EXIT
+APT=(apt-get -o DPkg::Lock::Timeout=300 -y)
+"\${APT[@]}" update && "\${APT[@]}" install git curl
 command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="\$HOME/.local/bin:\$PATH"
 [ -d /opt/tinyllm ] || git clone --branch "$BRANCH" --single-branch "$REPO_URL" /opt/tinyllm
@@ -34,7 +45,7 @@ VMEOF
       --scopes cloud-platform --labels app=tinyllm-v2 \
       ${SERVICE_ACCOUNT:+--service-account "$SERVICE_ACCOUNT"} \
       --metadata-from-file startup-script="$startup"
-    echo "Created $PREPARE_VM. Wait for gs://$BUCKET/data/v2/PREPARE_DONE, then run: $0 delete"
+    echo "Created $PREPARE_VM. Wait for gs://$BUCKET/data/v2/PREPARE_DONE (or PREPARE_FAILED, which deletes the VM itself), then run: $0 delete"
     ;;
   delete)
     gcloud compute instances delete "$PREPARE_VM" --project "$PROJECT" --zone "$ZONE" --quiet
