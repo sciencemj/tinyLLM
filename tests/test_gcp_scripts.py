@@ -3,7 +3,7 @@ import subprocess
 from pathlib import Path
 
 GCP = Path(__file__).resolve().parents[1] / "scripts" / "gcp"
-SCRIPTS = [GCP / n for n in ("prepare_data.sh", "create_template.sh", "startup.sh", "teardown.sh")]
+SCRIPTS = [GCP / n for n in ("prepare_data.sh", "create_template.sh", "startup.sh", "teardown.sh", "setup_network.sh")]
 RUNBOOK = Path(__file__).resolve().parents[1] / "docs" / "gcp-runbook.md"
 
 
@@ -99,6 +99,7 @@ key=other
 case "$args" in
   *instance-groups*) key=ig ;; *instance-templates*) key=tpl ;; *"compute instances"*) key=vm ;;
   *"compute disks"*) key=disk ;; *"buckets list"*|*"storage rm"*) key=bucket ;; *secrets*) key=secret ;;
+  *"routers nats"*) key=nat ;; *"compute routers"*) key=router ;;
 esac
 case "$args" in
   *" list "*) f "$key.list" && cat "$STUB_DIR/$key.list"; f "fail.list.$key" && { echo "list error" >&2; exit 1; }; exit 0 ;;
@@ -616,3 +617,44 @@ def test_prepare_delete_tolerates_a_vm_that_already_deleted_itself(sandbox):
     (sandbox / "vm.list").write_text("prep1\n")
     assert subprocess.run(["bash", str(GCP / "prepare_data.sh"), "delete"], capture_output=True).returncode == 0
     assert "instances delete prep1" in calls(sandbox)
+
+
+# ---------------------------------------------------------------------------
+# No external IPs: the org policy denies them, so VMs reach the internet through Cloud NAT
+# and Google APIs through Private Google Access.
+# ---------------------------------------------------------------------------
+
+
+def test_setup_network_enables_private_access_and_creates_nat(sandbox):
+    r = run("setup_network.sh")
+    assert r.returncode == 0, r.stderr
+    c = calls(sandbox)
+    assert "subnets update default" in c and "--enable-private-ip-google-access" in c
+    assert "routers create tinyllm-router" in c and "--network default" in c
+    assert "routers nats create tinyllm-nat" in c
+    assert "--router tinyllm-router" in c and "--nat-all-subnet-ip-ranges" in c
+
+
+def test_setup_network_is_idempotent(sandbox):
+    (sandbox / "router.list").write_text("tinyllm-router\n")
+    (sandbox / "nat.list").write_text("tinyllm-nat\n")
+    r = run("setup_network.sh")
+    assert r.returncode == 0, r.stderr
+    c = calls(sandbox)
+    assert "routers create" not in c and "nats create" not in c
+
+
+def test_vms_have_no_external_ip(sandbox):
+    (sandbox / "instances").write_text("RUNNING\n")
+    assert run("create_template.sh").returncode == 0
+    assert "instance-templates create" in calls(sandbox)
+    assert "--no-address" in [l for l in calls(sandbox).splitlines() if "instance-templates create" in l][0]
+    assert "--no-address" in text("prepare_data.sh")
+
+
+def test_teardown_removes_router_with_its_nat(sandbox):
+    (sandbox / "router.list").write_text("tinyllm-router\n")
+    r = run("teardown.sh", stdin=CONFIRM)
+    assert "routers delete tinyllm-router" in calls(sandbox)
+    assert r.returncode != 0  # the stub still lists it, so the leftover check must report it
+    assert "routers" in r.stderr

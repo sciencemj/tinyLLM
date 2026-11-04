@@ -56,6 +56,15 @@ Prerequisites, in order:
      (or delete itself in the fallback) when training ends. Without this role a finished or
      failed run keeps billing.
 
+6. Create the network path once. The org policy `compute.vmExternalIpAccess` denies external IPs, so every
+   VM is created with `--no-address`: Google APIs use Private Google Access and GitHub, Hugging Face and apt
+   go through Cloud NAT (outbound only):
+   ```bash
+   scripts/gcp/setup_network.sh
+   ```
+   Cloud NAT bills per hour and per GB processed. Traffic to GCS uses Private Google Access, not NAT.
+   Teardown removes the router and NAT.
+
 ## 2. Corpus prep (standard CPU VM, never spot)
 
 ```bash
@@ -151,7 +160,7 @@ marker `gs://$BUCKET/status/DONE_<tag>` first if you want to continue a finished
 scripts/gcp/teardown.sh
 ```
 
-It prints what it will remove (MIG, every labelled VM in any zone, `FALLBACK_VM`, instance template, disks, bucket and its
+It prints what it will remove (MIG, every labelled VM in any zone, `FALLBACK_VM`, instance template, disks, Cloud Router and NAT, bucket and its
 contents, secret) and requires you to type `DELETE <project>`. It tolerates only "not found" errors; if compute cleanup fails it stops before
 touching data, and it lists leftovers at the end and exits non-zero if anything remains. Download anything you want to keep first (checkpoints
 are deleted with the bucket). Afterwards open Billing in the console and check that no GPU, disk or

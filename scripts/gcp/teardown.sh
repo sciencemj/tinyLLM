@@ -6,6 +6,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${ENV_FILE:-$HERE/env}"
+ROUTER_NAME="${ROUTER_NAME:-tinyllm-router}"
 
 cat <<MSG
 This will PERMANENTLY remove from project $PROJECT (all zones for VMs and disks):
@@ -13,6 +14,7 @@ This will PERMANENTLY remove from project $PROJECT (all zones for VMs and disks)
   - every VM labelled app=tinyllm-v2, and the VMs $FALLBACK_VM and $PREPARE_VM
   - instance template       $TEMPLATE_NAME
   - disks named ${MIG_NAME}-*, $FALLBACK_VM, $PREPARE_VM
+  - Cloud Router $ROUTER_NAME and its NAT
   - bucket gs://$BUCKET and ALL its contents (data, checkpoints)
   - secret                  $SECRET_NAME
 MSG
@@ -57,6 +59,7 @@ while read -r name zone; do
   [ -n "$name" ] || continue
   try_delete "disk $name" gcloud compute disks delete "$name" --project "$PROJECT" --zone "${zone##*/}" --quiet
 done <<< "$disks"
+try_delete "router $ROUTER_NAME and its NAT" gcloud compute routers delete "$ROUTER_NAME" --project "$PROJECT" --region "$REGION" --quiet
 if [ "$FAILED" -ne 0 ]; then
   echo "Compute cleanup failed: bucket and secret were NOT touched. Fix the errors above and rerun." >&2
   exit 1
@@ -74,6 +77,7 @@ check "managed instance groups" gcloud compute instance-groups managed list --pr
 check "VMs" gcloud compute instances list --project "$PROJECT" --filter "labels.app='tinyllm-v2' OR $NAMES" --format 'value(name)'
 check "templates" gcloud compute instance-templates list --project "$PROJECT" --filter "name='$TEMPLATE_NAME'" --format 'value(name)'
 check "disks" gcloud compute disks list --project "$PROJECT" --filter "$NAMES" --format 'value(name)'
+check "routers" gcloud compute routers list --project "$PROJECT" --filter "name='$ROUTER_NAME'" --format 'value(name)'
 check "buckets" gcloud storage buckets list --project "$PROJECT" --filter "name='$BUCKET'" --format 'value(name)'
 check "secrets" gcloud secrets list --project "$PROJECT" --filter "name~'$SECRET_NAME'" --format 'value(name)'
 if [ -n "$left" ] || [ "$FAILED" -ne 0 ]; then

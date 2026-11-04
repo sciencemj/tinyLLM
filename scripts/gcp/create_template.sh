@@ -61,6 +61,7 @@ gcloud compute instance-templates create "$TEMPLATE_NAME" \
   --maintenance-policy TERMINATE \
   --image-family "$IMAGE_FAMILY" --image-project "$IMAGE_PROJECT" \
   --boot-disk-size "${BOOT_DISK_GB}GB" --boot-disk-type pd-ssd \
+  --no-address \
   --scopes cloud-platform \
   --labels app=tinyllm-v2 \
   ${SERVICE_ACCOUNT:+--service-account "$SERVICE_ACCOUNT"} \

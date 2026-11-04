@@ -51,6 +51,7 @@ VMEOF
       --provisioning-model STANDARD \
       --image-family ubuntu-2204-lts --image-project ubuntu-os-cloud \
       --boot-disk-size 500GB --boot-disk-type pd-ssd \
+      --no-address \
       --scopes cloud-platform --labels app=tinyllm-v2 \
       ${SERVICE_ACCOUNT:+--service-account "$SERVICE_ACCOUNT"} \
       --metadata-from-file startup-script="$startup"
