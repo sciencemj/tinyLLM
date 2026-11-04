@@ -243,3 +243,13 @@ def test_training_run_with_sampling_enabled_completes(tmp_path):
 def test_data_config_tokenizer_path(data, path):
     cfg = compose_cfg(["model=tiny", "run=smoke", "tag=t", f"data={data}"])
     assert cfg.data.tokenizer == path
+
+
+def test_resolve_resume_raises_when_listing_fails(tmp_path, monkeypatch):
+    # An unreadable checkpoint directory must not look like "no checkpoint": restart from 0.
+    def boom(path):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(os, "scandir", boom)
+    with pytest.raises(OSError):
+        resolve_resume(tmp_path)

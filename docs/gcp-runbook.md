@@ -22,19 +22,36 @@ Do not start until you have confirmed all of these. Nothing below does it for yo
 
 ## 1. One-time setup (you run these; they create billable resources)
 
-```bash
-cp scripts/gcp/env.example scripts/gcp/env   # edit it
-# bucket
-gcloud storage buckets create "gs://$BUCKET" --location "$REGION"
-# secret: type the key at the hidden prompt, never put it on a command line
-read -rs WANDB_API_KEY && printf %s "$WANDB_API_KEY" | gcloud secrets create "$SECRET_NAME" --data-file=- ; unset WANDB_API_KEY
-```
+Prerequisites, in order:
 
-The VM service account needs Storage Object Admin on the bucket and Secret Manager Secret Accessor on the secret.
+1. Push the branch so the VM can clone it. The repo is public, so a plain HTTPS clone works
+   once the branch exists on GitHub: `git push -u origin feat/tinyllm-v2`. The VM checks out
+   `BRANCH` from `env`, so that name must match.
+2. Enable the APIs once per project:
+   ```bash
+   source scripts/gcp/env
+   gcloud services enable compute.googleapis.com secretmanager.googleapis.com storage.googleapis.com --project "$PROJECT"
+   ```
+3. Copy and edit the env file (`scripts/gcp/env` is git-ignored; it holds no secrets):
+   `cp scripts/gcp/env.example scripts/gcp/env`
+4. Create the bucket and the secret (every command needs `--project`):
+   ```bash
+   source scripts/gcp/env
+   gcloud storage buckets create "gs://$BUCKET" --project "$PROJECT" --location "$REGION"
+   # type the key at the hidden prompt; never put it on a command line
+   read -rs WANDB_API_KEY && printf %s "$WANDB_API_KEY" | gcloud secrets create "$SECRET_NAME" --project "$PROJECT" --data-file=- ; unset WANDB_API_KEY
+   ```
+5. The VM's service account (default: the Compute Engine default account, or `SERVICE_ACCOUNT`) needs:
+   - `roles/storage.objectAdmin` on the bucket (data, checkpoints, status markers),
+   - `roles/secretmanager.secretAccessor` on the secret,
+   - `roles/compute.instanceAdmin.v1` on the project, so the VM can resize its own MIG to 0
+     (or delete itself in the fallback) when training ends. Without this role a finished or
+     failed run keeps billing.
 
 ## 2. Corpus prep (standard CPU VM, never spot)
 
 ```bash
+source scripts/gcp/env
 scripts/gcp/prepare_data.sh create    # n2-highmem-8, 64GB RAM (>= 32GB required), 500GB disk
 # wait for gs://$BUCKET/data/v2/PREPARE_DONE
 scripts/gcp/prepare_data.sh delete
@@ -42,33 +59,60 @@ scripts/gcp/prepare_data.sh delete
 
 Prep is a standard VM on purpose. A failure restarts from zero, which costs hours, and a spot
 preemption would cause exactly that. Delete the VM as soon as the upload is confirmed.
+Training refuses to start until `PREPARE_DONE` exists.
 
 ## 3. Start training
 
 ```bash
-GPU_TYPE=l4 scripts/gcp/create_template.sh      # or GPU_TYPE=h100
+source scripts/gcp/env
+GPU_TYPE=h100 scripts/gcp/create_template.sh      # or GPU_TYPE=l4; the command-line value wins over env
 ```
 
-`startup.sh` clones the branch, runs `uv sync`, copies data if missing, mounts the checkpoints,
-fetches the W&B key from Secret Manager (no echo, no tracing) and starts training. It is safe on every boot.
+The script replaces any earlier MIG and template, then waits (default 15 minutes) for a VM to be
+RUNNING. If none appears (no quota or capacity) it deletes the MIG and exits non-zero, so a stuck
+H100 group can never come up later next to an L4 VM on the same checkpoint directory and W&B run.
+To fall back to L4, just rerun with `GPU_TYPE=l4`.
+
+`startup.sh` runs in the foreground on every boot: it clones the branch, runs `uv sync`, copies data if
+missing (and fails loudly if any file is missing), checks the GPU with `nvidia-smi` and torch, mounts
+checkpoints, fetches the W&B key from Secret Manager (no echo, no tracing; an empty key fails) and trains.
 Logs on the VM: `/var/log/tinyllm-train.log`.
 
+When billing stops by itself: training finishes (DONE marker in `gs://$BUCKET/status/`), training
+fails 3 times or any boot step aborts (FAILED marker), or a DONE marker already exists. In each
+case the VM resizes the MIG to 0. A preemption is not a failure; the MIG recreates the VM.
+
 Unverified: whether a MIG works with `a3-highgpu-1g` (H100). If MIG creation fails, the fallback is a
-single spot VM created from the same template (`gcloud compute instances create VM --source-instance-template
-tinyllm-template --zone ZONE`) plus a manual restart after each preemption: start the stopped/recreated
-VM again and `startup.sh` resumes training.
+single spot VM named `$FALLBACK_VM` made from the same template plus a manual restart after each preemption:
+```bash
+gcloud compute instances create "$FALLBACK_VM" --project "$PROJECT" --zone "$ZONE" --source-instance-template "$TEMPLATE_NAME"
+```
+With DELETE termination a preempted VM disappears; rerun that command to bring it back, and `startup.sh`
+resumes from the checkpoint. The fallback VM deletes itself when training ends. Teardown covers `$FALLBACK_VM`.
 
 ## 4. Verify resume (small run first)
 
 Use `run=smoke`/`model=tiny`, delete the VM, and confirm the MIG recreates it and the same W&B run continues.
 
-## 5. Teardown
+## 5. Stop billing but keep data
+
+```bash
+source scripts/gcp/env
+gcloud compute instance-groups managed resize "$MIG_NAME" --size 0 --zone "$ZONE" --project "$PROJECT"
+```
+
+This deletes the GPU VM and its disk. Checkpoints, data and the secret stay in the bucket and
+Secret Manager and keep costing a small storage fee. To train again, resize to 1 (remove the DONE
+marker `gs://$BUCKET/status/DONE_<tag>` first if you want to continue a finished run).
+
+## 6. Teardown
 
 ```bash
 scripts/gcp/teardown.sh
 ```
 
-It prints what it will remove (MIG, instance template, disks, bucket and its contents, secret) and
-requires you to type `DELETE <project>`. Download anything you want to keep first (checkpoints
+It prints what it will remove (MIG, every labelled VM in any zone, `FALLBACK_VM`, instance template, disks, bucket and its
+contents, secret) and requires you to type `DELETE <project>`. It tolerates only "not found" errors; if compute cleanup fails it stops before
+touching data, and it lists leftovers at the end and exits non-zero if anything remains. Download anything you want to keep first (checkpoints
 are deleted with the bucket). Afterwards open Billing in the console and check that no GPU, disk or
 storage charges keep accruing.

@@ -40,7 +40,10 @@ def resolve_resume(ckpt_dir: Path) -> Path | None:
     if not ckpt_dir.is_dir():
         print(f"no checkpoint directory {ckpt_dir}: fresh start")
         return None
-    for path in sorted(ckpt_dir.glob("*.ckpt"), key=lambda p: p.stat().st_mtime, reverse=True):
+    # os.scandir raises on a listing error; Path.glob would swallow it and report "empty".
+    with os.scandir(ckpt_dir) as it:
+        found = [Path(e.path) for e in it if e.name.endswith(".ckpt") and e.is_file()]
+    for path in sorted(found, key=lambda p: p.stat().st_mtime, reverse=True):
         try:
             torch.load(path, map_location="cpu", weights_only=WEIGHTS_ONLY)
         except (RuntimeError, EOFError, pickle.UnpicklingError) as e:
