@@ -2,16 +2,30 @@
 # Create the spot instance template and a size-1 MIG that recreates the VM after preemption.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# A value given on the command line must beat the env file (for example MODEL=main DATA=fineweb
+# RUN=resume_test TAG=resume-test-1 GPU_TYPE=l4 for the resume test).
+CALLER_VARS=(GPU_TYPE MODEL DATA RUN TAG INIT_FROM)
+for v in "${CALLER_VARS[@]}"; do printf -v "CALLER_$v" %s "${!v:-}"; done
 # shellcheck source=/dev/null
-GPU_TYPE_CALLER="${GPU_TYPE:-}"   # a value given on the command line must beat the env file
 source "${ENV_FILE:-$HERE/env}"
-GPU_TYPE="${GPU_TYPE_CALLER:-${GPU_TYPE:-}}"
+for v in "${CALLER_VARS[@]}"; do
+  c="CALLER_$v"
+  [ -z "${!c}" ] || printf -v "$v" %s "${!c}"
+done
+INIT_FROM="${INIT_FROM:-}"
 
 case "${GPU_TYPE:?set GPU_TYPE=h100|l4}" in
   h100) MACHINE_TYPE=a3-highgpu-1g ;;
   l4)   MACHINE_TYPE=g2-standard-8 ;;
   *) echo "GPU_TYPE must be h100 or l4, got: $GPU_TYPE" >&2; exit 2 ;;
 esac
+
+# Pin the code: the VM checks out exactly this commit, so it must already be on origin.
+COMMIT="$(git -C "$HERE" rev-parse HEAD)"
+if ! git -C "$HERE" merge-base --is-ancestor "$COMMIT" "origin/$BRANCH"; then
+  echo "commit $COMMIT is not on origin/$BRANCH (as last fetched): git push first" >&2
+  exit 1
+fi
 
 WAIT_SECS="${WAIT_SECS:-900}"
 POLL_SECS="${POLL_SECS:-15}"
@@ -50,7 +64,7 @@ gcloud compute instance-templates create "$TEMPLATE_NAME" \
   --scopes cloud-platform \
   --labels app=tinyllm-v2 \
   ${SERVICE_ACCOUNT:+--service-account "$SERVICE_ACCOUNT"} \
-  --metadata "tl-bucket=$BUCKET,tl-secret=$SECRET_NAME,tl-repo=$REPO_URL,tl-branch=$BRANCH,tl-model=$MODEL,tl-data=$DATA,tl-run=$RUN,tl-tag=$TAG,tl-mig=$MIG_NAME,tl-zone=$ZONE,tl-project=$PROJECT" \
+  --metadata "tl-bucket=$BUCKET,tl-secret=$SECRET_NAME,tl-repo=$REPO_URL,tl-branch=$BRANCH,tl-model=$MODEL,tl-data=$DATA,tl-run=$RUN,tl-tag=$TAG,tl-mig=$MIG_NAME,tl-zone=$ZONE,tl-project=$PROJECT,tl-commit=$COMMIT${INIT_FROM:+,tl-init-from=$INIT_FROM}" \
   --metadata-from-file startup-script="$HERE/startup.sh"
 
 # Unverified: a MIG with a3-highgpu-1g. If this fails, see docs/gcp-runbook.md (single spot VM fallback).
@@ -62,7 +76,8 @@ gcloud compute instance-groups managed create "$MIG_NAME" \
 # Wait for a RUNNING instance; otherwise delete the group so it cannot start later unnoticed.
 attempts=$(( WAIT_SECS / POLL_SECS ))
 for ((i = 0; i < attempts; i++)); do
-  status="$(gcloud compute instance-groups managed list-instances "$MIG_NAME" --project "$PROJECT" --zone "$ZONE" --format 'value(instanceStatus)')"
+  # A transient listing failure must not abort here: set -e would leave the group (and its VM) alive.
+  status="$(gcloud compute instance-groups managed list-instances "$MIG_NAME" --project "$PROJECT" --zone "$ZONE" --format 'value(instanceStatus)')" || status=""
   if [[ "$status" == *RUNNING* ]]; then
     echo "MIG $MIG_NAME has a RUNNING $MACHINE_TYPE VM. GPU billing is running; run docs/gcp-runbook.md section 5 to stop it."
     exit 0
