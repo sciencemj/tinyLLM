@@ -1,2 +1,3 @@
 train_bin: data/stories_train.bin
 val_bin: data/stories_val.bin
+tokenizer: data/tokenizer.json

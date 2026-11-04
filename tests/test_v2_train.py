@@ -9,6 +9,7 @@ import torch
 
 from tinyllm.schedule import lr_at
 from tinyllm.v2.module import LlamaLM
+from tinyllm.v2.samples import SampleCallback
 from tinyllm.v2.train import (
     build_run, compose_cfg, main, make_logger, resolve_resume, train,
 )
@@ -205,3 +206,31 @@ def test_wandb_uses_wandb_dir_not_ckpt_dir(tmp_path):
     init = make_logger(run_cfg)._wandb_init
     assert init["dir"] == str(tmp_path / "w")
     assert make_logger(cfg("a"))._wandb_init["dir"] == "out/wandb"
+
+
+def test_smoke_config_disables_sampling(tmp_path):
+    _, trainer, _, _ = build_run(compose_cfg(overrides(tmp_path, tmp_path / "ck")))
+    assert not any(isinstance(c, SampleCallback) for c in trainer.callbacks)
+
+
+def test_run_config_enables_sampling_with_data_tokenizer(tmp_path):
+    ov = overrides(tmp_path, tmp_path / "ck") + [
+        "run.samples.prompts=chat", "run.samples.every_n_steps=3",
+        f"data.tokenizer={ROOT / 'data' / 'tokenizer.json'}",
+    ]
+    _, trainer, _, _ = build_run(compose_cfg(ov))
+    cb = [c for c in trainer.callbacks if isinstance(c, SampleCallback)]
+    assert len(cb) == 1 and cb[0].every_n_steps == 3 and cb[0].chat
+
+
+def test_training_run_with_sampling_enabled_completes(tmp_path):
+    from tinyllm.tokenizer import train_tokenizer
+
+    tok_path = tmp_path / "tok.json"
+    train_tokenizer(["Once upon a time Lily ran home."] * 50, vocab_size=64).save(str(tok_path))
+    ov = overrides(tmp_path, tmp_path / "ck", **{"wandb.mode": "offline"}) + [
+        "run.samples.prompts=chat", "run.samples.every_n_steps=2", f"data.tokenizer={tok_path}",
+        f"wandb.dir={tmp_path / 'wb'}",
+    ]
+    main(ov)
+    assert (tmp_path / "ck" / "last.ckpt").exists()

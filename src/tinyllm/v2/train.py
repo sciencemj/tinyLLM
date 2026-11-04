@@ -15,9 +15,11 @@ from hydra import compose, initialize_config_dir
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig
+from tokenizers import Tokenizer
 
 from tinyllm.v2.data import BinData
 from tinyllm.v2.module import LlamaLM
+from tinyllm.v2.samples import SampleCallback, prompts_for
 
 CONFIG_DIR = Path(__file__).resolve().parents[3] / "configs"
 
@@ -94,6 +96,12 @@ def build_run(cfg):
             dirpath=ckpt_dir, filename="best", monitor="val/loss", mode="min", save_top_k=1,
         ),
     ]
+    if run.samples.prompts != "none":
+        prompts, chat = prompts_for(run.samples.prompts)
+        callbacks.append(SampleCallback(
+            prompts, run.samples.every_n_steps, Tokenizer.from_file(str(cfg.data.tokenizer)),
+            chat=chat,
+        ))
     trainer = L.Trainer(
         max_steps=run.total_steps, accelerator="auto",
         precision="bf16-mixed" if torch.cuda.is_available() else "32-true",
