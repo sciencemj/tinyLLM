@@ -1,0 +1,2 @@
+train_bin: data/v2/fineweb_train.bin
+val_bin: data/v2/fineweb_val.bin

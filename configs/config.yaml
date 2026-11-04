@@ -1,0 +1,24 @@
+defaults:
+  - model: ???
+  - data: stories
+  - run: ???
+  - override hydra/job_logging: disabled
+  - override hydra/hydra_logging: disabled
+  - _self_
+
+# Names the run: it fixes the W&B run id and the default checkpoint directory,
+# so a restarted job with the same tag continues the same run.
+tag: ???
+ckpt_dir: out/v2/${tag}
+seed: 1234
+
+wandb:
+  project: tinyllm-v2
+  mode: online  # falls back to offline when WANDB_API_KEY is unset
+
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+  job:
+    chdir: false

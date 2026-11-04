@@ -1,0 +1,14 @@
+# v1 comparison run on TinyStories: same LR schedule as v1.
+block_size: 512
+batch_size: 32
+steps_per_chunk: 100
+val_batches: 20
+num_workers: 4
+total_steps: 57000
+lr: 6.0e-4
+min_lr: 6.0e-5
+warmup: 200
+weight_decay: 0.1
+log_every_n_steps: 10
+save_every_minutes: 30
+init_from: null
