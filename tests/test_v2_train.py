@@ -12,7 +12,7 @@ from tinyllm.v2.bench import sweep
 from tinyllm.v2.module import LlamaLM
 from tinyllm.v2.samples import SampleCallback
 from tinyllm.v2.train import (
-    build_run, compose_cfg, main, make_logger, resolve_resume, train,
+    ProgressPrinter, build_run, compose_cfg, main, make_logger, resolve_resume, train,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -356,3 +356,13 @@ def test_bench_config_is_real_size_and_finishes():
     c = compose_cfg(["model=main", "data=fineweb", "run=bench", "tag=b"]).run
     assert c.block_size == 1024 and c.total_steps < 1000 and c.save_every_minutes >= 5
     assert 32 in c.bench_batches
+
+
+def test_progress_line_reports_step_and_rate(tmp_path, capsys):
+    run = compose_cfg(overrides(tmp_path, tmp_path / "ck")).run
+    lm, trainer, data, _ = build_run(compose_cfg(overrides(tmp_path, tmp_path / "ck")))
+    printer = next(c for c in trainer.callbacks if isinstance(c, ProgressPrinter))
+    printer.every_seconds = 0
+    trainer.fit(lm, datamodule=data)
+    out = capsys.readouterr().out
+    assert f"/{run.total_steps} loss=" in out and "tok_s=" in out and "eta_h=" in out

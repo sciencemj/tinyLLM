@@ -3,7 +3,7 @@ import subprocess
 from pathlib import Path
 
 GCP = Path(__file__).resolve().parents[1] / "scripts" / "gcp"
-SCRIPTS = [GCP / n for n in ("prepare_data.sh", "create_template.sh", "startup.sh", "teardown.sh", "setup_network.sh")]
+SCRIPTS = [GCP / n for n in ("prepare_data.sh", "create_template.sh", "startup.sh", "teardown.sh", "setup_network.sh", "watch.sh")]
 RUNBOOK = Path(__file__).resolve().parents[1] / "docs" / "gcp-runbook.md"
 
 
@@ -63,6 +63,18 @@ def test_template_on_demand_has_no_termination_action():
     assert 'STANDARD) TERMINATION_ARGS=()' in t
     assert '--provisioning-model "$PROVISIONING"' in t
     assert "PROVISIONING" in t.split("CALLER_VARS=(")[1].split(")")[0]
+
+
+def test_viewer_starts_before_the_secret_and_training_stays_outside_tmux():
+    t = text("startup.sh")
+    assert t.index("start_viewer ||") < t.index("secrets versions access")
+    assert "tmux new-session -d -s train \"tail" in t
+    assert not re.search(r"tmux[^\n]*tinyllm\.v2\.train", t)
+
+
+def test_watch_attaches_read_only_over_iap():
+    t = text("watch.sh")
+    assert "tmux attach -r -t train" in t and "--tunnel-through-iap" in t
 
 
 def test_prepare_uses_standard_vm():
@@ -179,6 +191,7 @@ def sandbox(tmp_path, monkeypatch):
         'wait "$pid"; rc=$?\nkill "$w" 2>/dev/null; wait "$w" 2>/dev/null\n'
         '[ -f "$STUB_DIR/timed_out" ] && exit 124; exit $rc\n'
     )
+    (stub / "tmux").write_text('#!/usr/bin/env bash\necho "tmux $*" >> "$STUB_DIR/calls.log"\n[ "$1" != has-session ]\n')
     for name in ("nvidia-smi", "gcsfuse", "apt-get", "mountpoint"):
         (stub / name).write_text("#!/usr/bin/env bash\n[ -f \"$STUB_DIR/fail.$(basename $0)\" ] && exit 1; exit 0\n")
     for p in stub.iterdir():

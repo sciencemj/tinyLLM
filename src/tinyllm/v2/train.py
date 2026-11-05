@@ -4,6 +4,7 @@ import hashlib
 import os
 import pickle
 import sys
+import time
 import warnings
 from datetime import timedelta
 from pathlib import Path
@@ -58,6 +59,29 @@ def resolve_resume(ckpt_dir: Path) -> Path | None:
     return None
 
 
+class ProgressPrinter(L.Callback):
+    """Prints one plain progress line every `every_seconds`: the log file is not a terminal."""
+
+    def __init__(self, tokens_per_step, total_steps, every_seconds=30):
+        self.tokens_per_step, self.total_steps = tokens_per_step, total_steps
+        self.every_seconds = every_seconds
+        self.last_time, self.last_step = None, 0
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        now, step = time.monotonic(), trainer.global_step
+        if self.last_time is None:
+            self.last_time, self.last_step = now, step
+            return
+        seconds = now - self.last_time
+        if seconds < self.every_seconds or step == self.last_step:
+            return
+        steps_s = (step - self.last_step) / seconds if seconds else 0.0
+        eta_h = (self.total_steps - step) / steps_s / 3600 if steps_s else float("inf")
+        print(f"progress step={step}/{self.total_steps} loss={outputs['loss'].item():.4f} "
+              f"tok_s={steps_s * self.tokens_per_step:.0f} eta_h={eta_h:.1f}", flush=True)
+        self.last_time, self.last_step = now, step
+
+
 def make_logger(cfg) -> WandbLogger:
     mode = cfg.wandb.mode
     if mode == "online" and not os.environ.get("WANDB_API_KEY"):
@@ -109,6 +133,7 @@ def build_run(cfg):
         ModelCheckpoint(
             dirpath=ckpt_dir, filename="best", monitor="val/loss", mode="min", save_top_k=1,
         ),
+        ProgressPrinter(run.batch_size * run.block_size, run.total_steps),
     ]
     if run.samples.prompts != "none":
         prompts, chat = prompts_for(run.samples.prompts)

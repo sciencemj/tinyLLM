@@ -92,7 +92,9 @@ PROVISIONING=STANDARD GPU_TYPE=l4 scripts/gcp/create_template.sh   # on demand: 
 
 Observed on L4 spot in us-central1 (2026-11-05): VMs lasted 5 to 58 minutes, recreation failed for 20 to 34
 minutes on stockouts, and boot to training took about 11 minutes. A checkpoint save takes about 70 seconds, so
-`save_every_minutes` must stay far above that. Keep `RUN=bench` (batch sweep, then a short run to DONE) for a new GPU.
+`save_every_minutes` must stay far above that. Watch a run live with `scripts/gcp/watch.sh` (read-only tmux: log with `progress step=` lines, GPU stats below;
+detach with Ctrl-b d). Training runs outside tmux, so detaching or a dropped connection cannot affect it.
+Keep `RUN=bench` (batch sweep, then a short run to DONE) for a new GPU.
 
 The script replaces any earlier MIG and template, then waits (default 15 minutes) for a VM to be
 RUNNING. If none appears (no quota or capacity) it deletes the MIG and exits non-zero, so a stuck

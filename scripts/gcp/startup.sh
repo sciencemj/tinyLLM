@@ -103,6 +103,20 @@ if ! command -v git >/dev/null; then
   timeout "$T_APT" "${APT[@]}" install git curl
 fi
 
+# Live viewer for scripts/gcp/watch.sh. Training stays outside tmux: its exit code and signals drive
+# the logic below, and a stray Ctrl-C must not reach it. Best effort: a viewer failure never stops a
+# run. It starts before the W&B key is fetched, so the tmux server cannot inherit the key.
+start_viewer() {
+  if ! command -v tmux >/dev/null; then
+    timeout "$T_APT" "${APT[@]}" update
+    timeout "$T_APT" "${APT[@]}" install tmux
+  fi
+  tmux has-session -t train 2>/dev/null && return 0
+  tmux new-session -d -s train "tail -n 200 -F '$LOG'"
+  tmux split-window -t train -v -l 6 "watch -n 5 nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,power.draw --format=csv"
+}
+start_viewer || echo "tmux viewer not started" >&2
+
 if ! command -v gcsfuse >/dev/null; then
   CODENAME="$(lsb_release -c -s)"
   echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt gcsfuse-$CODENAME main" > /etc/apt/sources.list.d/gcsfuse.list
