@@ -152,7 +152,7 @@ def build_run(cfg):
 
 
 def train(cfg):
-    if cfg.run.get("bench_batches"):
+    if cfg.run.get("bench_sizes"):
         sweep(cfg)
     lm, trainer, data, ckpt_path = build_run(cfg)
     total = cfg.run.total_steps

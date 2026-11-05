@@ -322,40 +322,41 @@ def test_stories_data_config_carries_v1_chars_per_token():
     assert compose_cfg(["model=tiny", "run=smoke", "tag=t", "data=stories"]).data.chars_per_token == 4.088
 
 
-def test_sweep_reports_each_batch_size_smallest_first(tmp_path, capsys):
+def test_sweep_reports_each_size(tmp_path, capsys):
     cfg = compose_cfg(overrides(tmp_path, tmp_path / "ck", **{
-        "+run.bench_batches": "[4,2]", "+run.bench_steps": 2}))
+        "+run.bench_sizes": "[[16,2],[8,4]]", "+run.bench_steps": 2}))
     results = sweep(cfg)
-    assert [r["batch_size"] for r in results] == [2, 4]
+    assert [(r["block_size"], r["batch_size"]) for r in results] == [(16, 2), (8, 4)]
     assert all(r["tok_s"] > 0 and r["step_s"] > 0 for r in results)
-    assert "bench batch=2 tok_s=" in capsys.readouterr().out
+    assert "bench block=16 batch=2 tok_s=" in capsys.readouterr().out
 
 
 def test_train_runs_sweep_when_configured(tmp_path, capsys):
-    main(overrides(tmp_path, tmp_path / "ck", **{"+run.bench_batches": "[2]", "+run.bench_steps": 2}))
-    assert "bench batch=2 tok_s=" in capsys.readouterr().out
+    main(overrides(tmp_path, tmp_path / "ck", **{"+run.bench_sizes": "[[16,2]]", "+run.bench_steps": 2}))
+    assert "bench block=16 batch=2 tok_s=" in capsys.readouterr().out
     assert (tmp_path / "ck" / "last.ckpt").exists()
 
 
-def test_sweep_stops_at_first_out_of_memory(tmp_path, monkeypatch, capsys):
+def test_sweep_skips_a_size_that_runs_out_of_memory(tmp_path, monkeypatch, capsys):
     import tinyllm.v2.bench as bench
 
-    def fake(cfg, batch_size, steps):
-        if batch_size > 2:
+    def fake(cfg, block_size, batch_size, steps):
+        if batch_size == 4:
             raise torch.cuda.OutOfMemoryError("no")
-        return {"batch_size": batch_size, "tok_s": 1.0, "step_s": 1.0, "peak_gb": 1.0}
+        return {"block_size": block_size, "batch_size": batch_size, "tok_s": 1.0, "step_s": 1.0, "peak_gb": 1.0}
 
     monkeypatch.setattr(bench, "measure", fake)
     cfg = compose_cfg(overrides(tmp_path, tmp_path / "ck", **{
-        "+run.bench_batches": "[2,4,8]", "+run.bench_steps": 2}))
-    assert [r["batch_size"] for r in sweep(cfg)] == [2]
-    assert "bench batch=4 out of memory" in capsys.readouterr().out
+        "+run.bench_sizes": "[[16,2],[16,4],[8,2]]", "+run.bench_steps": 2}))
+    assert [(r["block_size"], r["batch_size"]) for r in sweep(cfg)] == [(16, 2), (8, 2)]
+    assert "bench block=16 batch=4 out of memory" in capsys.readouterr().out
 
 
-def test_bench_config_is_real_size_and_finishes():
+def test_bench_config_fits_the_measured_gpu_memory():
     c = compose_cfg(["model=main", "data=fineweb", "run=bench", "tag=b"]).run
-    assert c.block_size == 1024 and c.total_steps < 1000 and c.save_every_minutes >= 5
-    assert 32 in c.bench_batches
+    assert (c.block_size, c.batch_size) == (1024, 16)
+    assert c.total_steps == 1000 and c.save_every_minutes >= 5
+    assert [1024, 16] in c.bench_sizes
 
 
 def test_progress_line_reports_step_and_rate(tmp_path, capsys):
