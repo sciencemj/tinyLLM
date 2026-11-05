@@ -1,15 +1,16 @@
-# PROVISIONAL: batch size, steps and LR are set after the GPU benchmark.
+# L4 on demand, measured by run=bench: about 21k tok/s at any block/batch mix with the same token count.
+# 15B tokens / (16 x 1024 per step) = 915,528 steps, about 8.5 days including checkpoint time.
 block_size: 1024
-batch_size: 32
+batch_size: 16
 # One validation pass and one best.ckpt write happen per chunk (an epoch), and both are costly
 # at this scale, so use 5000 steps per chunk instead of the small-run 100.
 steps_per_chunk: 5000
 val_batches: 20
 num_workers: 4
-total_steps: 100000
+total_steps: 915528
 lr: 6.0e-4
 min_lr: 6.0e-5
-warmup: 1000
+warmup: 2000
 grad_clip: 1.0
 weight_decay: 0.1
 log_every_n_steps: 10
@@ -17,4 +18,4 @@ save_every_minutes: 30
 init_from: null
 samples:
   prompts: stories  # stories | chat | none; none disables sampling
-  every_n_steps: 1000
+  every_n_steps: 20000
