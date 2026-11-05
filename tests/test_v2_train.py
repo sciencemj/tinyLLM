@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from tinyllm.schedule import lr_at
+from tinyllm.v2.bench import sweep
 from tinyllm.v2.module import LlamaLM
 from tinyllm.v2.samples import SampleCallback
 from tinyllm.v2.train import (
@@ -319,3 +320,39 @@ def test_bits_per_char_uses_config_chars_per_token_and_is_absent_without_either(
 
 def test_stories_data_config_carries_v1_chars_per_token():
     assert compose_cfg(["model=tiny", "run=smoke", "tag=t", "data=stories"]).data.chars_per_token == 4.088
+
+
+def test_sweep_reports_each_batch_size_smallest_first(tmp_path, capsys):
+    cfg = compose_cfg(overrides(tmp_path, tmp_path / "ck", **{
+        "+run.bench_batches": "[4,2]", "+run.bench_steps": 2}))
+    results = sweep(cfg)
+    assert [r["batch_size"] for r in results] == [2, 4]
+    assert all(r["tok_s"] > 0 and r["step_s"] > 0 for r in results)
+    assert "bench batch=2 tok_s=" in capsys.readouterr().out
+
+
+def test_train_runs_sweep_when_configured(tmp_path, capsys):
+    main(overrides(tmp_path, tmp_path / "ck", **{"+run.bench_batches": "[2]", "+run.bench_steps": 2}))
+    assert "bench batch=2 tok_s=" in capsys.readouterr().out
+    assert (tmp_path / "ck" / "last.ckpt").exists()
+
+
+def test_sweep_stops_at_first_out_of_memory(tmp_path, monkeypatch, capsys):
+    import tinyllm.v2.bench as bench
+
+    def fake(cfg, batch_size, steps):
+        if batch_size > 2:
+            raise torch.cuda.OutOfMemoryError("no")
+        return {"batch_size": batch_size, "tok_s": 1.0, "step_s": 1.0, "peak_gb": 1.0}
+
+    monkeypatch.setattr(bench, "measure", fake)
+    cfg = compose_cfg(overrides(tmp_path, tmp_path / "ck", **{
+        "+run.bench_batches": "[2,4,8]", "+run.bench_steps": 2}))
+    assert [r["batch_size"] for r in sweep(cfg)] == [2]
+    assert "bench batch=4 out of memory" in capsys.readouterr().out
+
+
+def test_bench_config_is_real_size_and_finishes():
+    c = compose_cfg(["model=main", "data=fineweb", "run=bench", "tag=b"]).run
+    assert c.block_size == 1024 and c.total_steps < 1000 and c.save_every_minutes >= 5
+    assert 32 in c.bench_batches

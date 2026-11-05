@@ -87,7 +87,12 @@ run, and only then this section with the real `pretrain` values from `env`.
 ```bash
 source scripts/gcp/env
 GPU_TYPE=h100 scripts/gcp/create_template.sh      # or GPU_TYPE=l4; the command-line value wins over env
+PROVISIONING=STANDARD GPU_TYPE=l4 scripts/gcp/create_template.sh   # on demand: not preempted, costs more
 ```
+
+Observed on L4 spot in us-central1 (2026-11-05): VMs lasted 5 to 58 minutes, recreation failed for 20 to 34
+minutes on stockouts, and boot to training took about 11 minutes. A checkpoint save takes about 70 seconds, so
+`save_every_minutes` must stay far above that. Keep `RUN=bench` (batch sweep, then a short run to DONE) for a new GPU.
 
 The script replaces any earlier MIG and template, then waits (default 15 minutes) for a VM to be
 RUNNING. If none appears (no quota or capacity) it deletes the MIG and exits non-zero, so a stuck
@@ -132,7 +137,7 @@ resumes from the checkpoint. The fallback VM deletes itself when training ends. 
 ## 4. Verify resume (small run first)
 
 Run this after corpus prep (section 2; it trains on the real `fineweb` data, so `PREPARE_DONE` must exist) and
-before the long pretrain. Use the `resume_test` run (block 256, batch 8, 3000 steps, a checkpoint every minute):
+before the long pretrain. Use the `resume_test` run (block 256, batch 8, 3000 steps, a checkpoint every 5 minutes):
 
 ```bash
 source scripts/gcp/env

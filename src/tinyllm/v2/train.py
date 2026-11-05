@@ -17,6 +17,7 @@ from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig
 from tokenizers import Tokenizer
 
+from tinyllm.v2.bench import sweep
 from tinyllm.v2.data import BinData, chars_per_token
 from tinyllm.v2.module import LlamaLM
 from tinyllm.v2.samples import SampleCallback, prompts_for
@@ -126,6 +127,8 @@ def build_run(cfg):
 
 
 def train(cfg):
+    if cfg.run.get("bench_batches"):
+        sweep(cfg)
     lm, trainer, data, ckpt_path = build_run(cfg)
     total = cfg.run.total_steps
     try:

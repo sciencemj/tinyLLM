@@ -54,8 +54,15 @@ def test_secret_not_in_metadata():
 
 def test_template_termination_action_is_accepted_by_migs():
     t = text("create_template.sh")
-    assert "--instance-termination-action STOP" in t
+    assert "SPOT) TERMINATION_ARGS=(--instance-termination-action STOP)" in t
     assert "--instance-termination-action DELETE" not in t
+
+
+def test_template_on_demand_has_no_termination_action():
+    t = text("create_template.sh")
+    assert 'STANDARD) TERMINATION_ARGS=()' in t
+    assert '--provisioning-model "$PROVISIONING"' in t
+    assert "PROVISIONING" in t.split("CALLER_VARS=(")[1].split(")")[0]
 
 
 def test_prepare_uses_standard_vm():
@@ -327,6 +334,19 @@ def test_create_template_caller_gpu_type_beats_env_file(sandbox):
     assert "--machine-type a3-highgpu-1g" in c and "g2-standard-8" not in c
 
 
+def test_create_template_on_demand_runs_with_empty_termination_args(sandbox):
+    (sandbox / "instances").write_text("RUNNING\n")
+    r = run("create_template.sh", env={**os.environ, "PROVISIONING": "STANDARD"})
+    assert r.returncode == 0, r.stderr
+    c = calls(sandbox)
+    assert "--provisioning-model STANDARD" in c and "--instance-termination-action" not in c
+
+
+def test_create_template_rejects_unknown_provisioning(sandbox):
+    r = run("create_template.sh", env={**os.environ, "PROVISIONING": "CHEAP"})
+    assert r.returncode == 2 and "PROVISIONING must be" in r.stderr
+
+
 def test_create_template_replaces_old_group_and_template(sandbox):
     (sandbox / "ig.list").write_text("mig1 zones/zone1\n")
     (sandbox / "tpl.list").write_text("tpl1\n")
@@ -480,7 +500,7 @@ def test_resume_test_config_and_runbook_values():
     from tinyllm.v2.train import compose_cfg
 
     run_cfg = compose_cfg(["model=main", "data=fineweb", "run=resume_test", "tag=resume-test-1"]).run
-    assert (run_cfg.block_size, run_cfg.batch_size, run_cfg.total_steps, run_cfg.save_every_minutes) == (256, 8, 3000, 1)
+    assert (run_cfg.block_size, run_cfg.batch_size, run_cfg.total_steps, run_cfg.save_every_minutes) == (256, 8, 3000, 5)
     assert run_cfg.samples.prompts == "none"
     r = RUNBOOK.read_text()
     assert "MODEL=main DATA=fineweb RUN=resume_test TAG=resume-test-1" in r

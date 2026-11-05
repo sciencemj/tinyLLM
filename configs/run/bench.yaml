@@ -1,0 +1,21 @@
+# GPU benchmark: a batch-size sweep on the real data, then a short real run that ends in DONE.
+# Numbers come from the `bench batch=` lines in the log. The sweep uses no checkpoints or validation.
+bench_batches: [16, 32, 48, 64, 96, 128]
+bench_steps: 200
+block_size: 1024
+batch_size: 32
+steps_per_chunk: 250
+val_batches: 20
+num_workers: 4
+total_steps: 500
+lr: 6.0e-4
+min_lr: 6.0e-5
+warmup: 100
+grad_clip: 1.0
+weight_decay: 0.1
+log_every_n_steps: 10
+save_every_minutes: 30
+init_from: null
+samples:
+  prompts: none  # stories | chat | none; none disables sampling
+  every_n_steps: 1000

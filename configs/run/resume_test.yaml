@@ -1,5 +1,5 @@
 # Resume test (docs/gcp-runbook.md section 4): a short real run on the real corpus that is cheap
-# enough to preempt on purpose. Checkpoints every minute so a delete after a few minutes has
+# enough to preempt on purpose. Checkpoints every 5 minutes (a save takes about 70s) so a delete after ten minutes has
 # something to resume from; 3000 steps at batch 8 x block 256 keeps the run to a few minutes on L4.
 block_size: 256
 batch_size: 8
@@ -13,7 +13,7 @@ warmup: 100
 grad_clip: 1.0
 weight_decay: 0.1
 log_every_n_steps: 10
-save_every_minutes: 1
+save_every_minutes: 5
 init_from: null
 samples:
   prompts: none  # stories | chat | none; none disables sampling

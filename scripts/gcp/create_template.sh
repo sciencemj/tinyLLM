@@ -4,7 +4,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # A value given on the command line must beat the env file (for example MODEL=main DATA=fineweb
 # RUN=resume_test TAG=resume-test-1 GPU_TYPE=l4 for the resume test).
-CALLER_VARS=(GPU_TYPE MODEL DATA RUN TAG INIT_FROM)
+CALLER_VARS=(GPU_TYPE MODEL DATA RUN TAG INIT_FROM PROVISIONING)
 for v in "${CALLER_VARS[@]}"; do printf -v "CALLER_$v" %s "${!v:-}"; done
 # shellcheck source=/dev/null
 source "${ENV_FILE:-$HERE/env}"
@@ -13,6 +13,13 @@ for v in "${CALLER_VARS[@]}"; do
   [ -z "${!c}" ] || printf -v "$v" %s "${!c}"
 done
 INIT_FROM="${INIT_FROM:-}"
+
+# SPOT is cheaper; STANDARD (on demand) is never preempted. Only spot takes a termination action.
+case "${PROVISIONING:=SPOT}" in
+  SPOT) TERMINATION_ARGS=(--instance-termination-action STOP) ;;
+  STANDARD) TERMINATION_ARGS=() ;;
+  *) echo "PROVISIONING must be SPOT or STANDARD, got: $PROVISIONING" >&2; exit 2 ;;
+esac
 
 case "${GPU_TYPE:?set GPU_TYPE=h100|l4}" in
   h100) MACHINE_TYPE=a3-highgpu-1g ;;
@@ -51,14 +58,14 @@ if [ -n "$existing" ]; then
 fi
 
 # Both machine types have the GPU built in, so no --accelerator flag.
-# GPU VMs cannot live-migrate: TERMINATE on maintenance. Spot only; never STANDARD for GPU.
+# GPU VMs cannot live-migrate: TERMINATE on maintenance.
 # STOP, not DELETE: MIGs reject spot templates whose termination action is DELETE.
 # Metadata carries names only. The W&B key is fetched from Secret Manager at boot.
 gcloud compute instance-templates create "$TEMPLATE_NAME" \
   --project "$PROJECT" \
   --machine-type "$MACHINE_TYPE" \
-  --provisioning-model SPOT \
-  --instance-termination-action STOP \
+  --provisioning-model "$PROVISIONING" \
+  ${TERMINATION_ARGS[@]+"${TERMINATION_ARGS[@]}"} \
   --maintenance-policy TERMINATE \
   --image-family "$IMAGE_FAMILY" --image-project "$IMAGE_PROJECT" \
   --boot-disk-size "${BOOT_DISK_GB}GB" --boot-disk-type pd-ssd \
