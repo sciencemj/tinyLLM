@@ -1,0 +1,19 @@
+# SFT LR probe (lr 1e-4): same steps as its sibling probe; the lower final val/loss picks run=sft's lr.
+# init_from comes from INIT_FROM (tl-init-from) at launch.
+block_size: 1024
+batch_size: 16  # 1024x32 OOMs on the L4 (22GB)
+steps_per_chunk: 250
+val_batches: 20
+num_workers: 4
+total_steps: 2000
+lr: 1.0e-4
+min_lr: 1.0e-5
+warmup: 100
+grad_clip: 1.0
+weight_decay: 0.1
+log_every_n_steps: 10
+save_every_minutes: 30
+init_from: null
+samples:
+  prompts: chat
+  every_n_steps: 1000
