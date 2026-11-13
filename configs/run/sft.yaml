@@ -1,5 +1,5 @@
 # Final SFT: one epoch of data/v2/chat_train.bin (600,386,464 tokens / 16,384 per step).
-# lr is set from the sft_lr_low / sft_lr_high probes before launch. init_from comes from
+# lr 1e-4 from the probes: val/loss at step 2000 was 1.689 (1e-4) vs 1.793 (3e-5). init_from comes from
 # INIT_FROM (weights only; optimizer and step restart from zero).
 block_size: 1024
 batch_size: 16  # 1024x32 OOMs on the L4 (22GB)
@@ -7,8 +7,8 @@ steps_per_chunk: 500
 val_batches: 20
 num_workers: 4
 total_steps: 36644
-lr: 3.0e-5
-min_lr: 3.0e-6
+lr: 1.0e-4
+min_lr: 1.0e-5
 warmup: 200
 grad_clip: 1.0
 # 0.1 matches v1's SFT lesson. LlamaConfig has no residual dropout here, so there is none
