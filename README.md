@@ -18,6 +18,41 @@ you> What time do they open?
 bot> They open at 9:00.
 ```
 
+## v2 — `LlamaForCausalLM` 113M (2026-11)
+
+v1 다음 단계로 모델을 약 3.8배 키우고 구조를 현대 LLM에 맞췄다. FineWeb-Edu 150억 토큰으로
+사전학습하고 smol-smoltalk + SODA로 SFT했다. GCP L4 한 대에서 사전학습 약 201시간, SFT 약 9시간.
+
+가중치: [**tinyllm-113m-chat**](https://huggingface.co/sciencemj/tinyllm-113m-chat) (대화) ·
+[**tinyllm-113m-base**](https://huggingface.co/sciencemj/tinyllm-113m-base) (사전학습만). 둘 다
+Apache-2.0이고 `transformers`만으로 로드된다.
+
+```
+you> Hello! How are you?
+bot> I'm good, thank you. I saw your name when you came over and I thought I'd come over and say hi.
+you> What should I cook for dinner tonight?
+bot> Well, since it's just dinner, I thought I'd make something special. Do you have any recommendations?
+```
+
+| | v1 | v2 |
+|---|---|---|
+| 구조 | GPT-2형, `torch.nn` 레이어 | `LlamaForCausalLM` (RoPE, SwiGLU, RMSNorm, GQA) |
+| 파라미터 | 29.6M | 112.7M |
+| 사전학습 | TinyStories 934M 토큰 | FineWeb-Edu 15.0B 토큰 |
+| SFT | DailyDialog | smol-smoltalk + SODA 600M 토큰 |
+| 도구 | `deeptool` | Lightning, Hydra, W&B |
+| 하드웨어 | RTX 3060 Ti | GCP L4 (온디맨드) |
+
+코드는 `src/tinyllm/v2/`, 설정은 `configs/`, GCP 실행은 [`docs/gcp-runbook.md`](docs/gcp-runbook.md).
+결과는 [`docs/v2-pretrain.md`](docs/v2-pretrain.md)와 [`docs/v2-sft.md`](docs/v2-sft.md), 모델 카드는
+[`MODEL_CARD_V2.md`](MODEL_CARD_V2.md).
+
+```bash
+uv run tinyllm-chat-v2 --model sciencemj/tinyllm-113m-chat   # 또는 내보낸 로컬 디렉터리
+```
+
+아래부터는 v1 설명이다.
+
 ## 이 프로젝트가 직접 만든 것
 
 **스택 구성을 직접 정한다.** 트랜스포머를 몇 층 쌓을지, 각 층을 얼마나 넓게 할지,
@@ -296,6 +331,9 @@ uv run hf upload sciencemj/tinyllm-29m-chat        dist/tinyllm-29m-chat        
 | `sft_*_best.pt` | **비상업 + 출처표시 + 동일조건** — CC BY-NC-SA 4.0 |
 | TinyStories 데이터 | CDLA-Sharing-1.0 |
 | DailyDialog 데이터 | CC BY-NC-SA 4.0, "research purposes only" |
+| v2 가중치 (`tinyllm-113m-chat`, `-base`) | Apache-2.0 |
+| FineWeb-Edu 데이터 (v2) | ODC-By 1.0 + Common Crawl 이용약관 |
+| smol-smoltalk / SODA 데이터 (v2) | Apache-2.0 / CC-BY-4.0 |
 
 **SFT 체크포인트를 상업적으로 쓸 수 없다.** 유료 서비스, 광고가 붙은 데모, 사내 제품
 어디에도 해당한다. 상업적 이용이 필요하면 사전학습 체크포인트를 그대로 두고 2단계
